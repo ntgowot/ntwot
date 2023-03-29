@@ -1391,7 +1391,7 @@ async function get_user_info(cookies, is_websocket, dispatch) {
 	};
 	if(accountSystem == "local" && cookies.sessionid) {
 		// user data from session
-		var s_data = await db.get("SELECT * FROM auth_session WHERE session_key=?", cookies.sessionid);
+		var s_data = await db.get("SELECT * FROM auth_session WHERE session_key=?", encryptHash(cookies.sessionid, "idk")); // this is not the right way to do it and i know it
 		if(s_data) {
 			user = JSON.parse(s_data.session_data);
 			if(cookies.csrftoken == user.csrftoken) { // verify csrftoken

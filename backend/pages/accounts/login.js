@@ -39,6 +39,7 @@ module.exports.POST = async function(req, write, server, ctx, params) {
 	var url = server.url;
 	var callPage = server.callPage;
 	var accountSystem = server.accountSystem;
+	var encryptHash = server.encryptHash;
 	
 	if(accountSystem == "uvias") return;
 
@@ -62,7 +63,7 @@ module.exports.POST = async function(req, write, server, ctx, params) {
 	var expires = date_now + ms.month;
 
 	var sessionid = new_token(32);
-	var new_cookie = "sessionid=" + sessionid + "; expires=" + http_time(expires) + "; path=/;";
+	var new_cookie = "sessionid=" + sessionid + "; expires=" + http_time(expires) + "; HttpOnly; path=/;";
 
 	var data = {
 		type: "sessionid_auth",
@@ -72,7 +73,7 @@ module.exports.POST = async function(req, write, server, ctx, params) {
 		username: loginuser.username
 	}
 
-	await db.run("INSERT INTO auth_session VALUES(?, ?, ?)", [sessionid, JSON.stringify(data), expires]);
+	await db.run("INSERT INTO auth_session VALUES(?, ?, ?)", [encryptHash(sessionid, "idk"), JSON.stringify(data), expires]); // again, this is not good
 	await db.run("UPDATE auth_user SET last_login=? WHERE id=?", [date_now, loginuser.id]);
 
 	var next = "/accounts/profile/";
