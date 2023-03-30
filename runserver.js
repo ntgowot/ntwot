@@ -71,7 +71,7 @@ var ipv6_to_range  = ipaddress.ipv6_to_range;
 var is_cf_ipv4_int = ipaddress.is_cf_ipv4_int;
 var is_cf_ipv6_int = ipaddress.is_cf_ipv6_int;
 
-var DATA_PATH = "../nwotdata/";
+var DATA_PATH = "./nwotdata/";
 var SETTINGS_PATH = DATA_PATH + "settings.json";
 
 function initializeDirectoryStruct() {
