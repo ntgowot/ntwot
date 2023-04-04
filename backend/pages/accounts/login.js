@@ -63,7 +63,7 @@ module.exports.POST = async function(req, write, server, ctx, params) {
 	var expires = date_now + ms.month;
 
 	var sessionid = new_token(32);
-	var new_cookie = "sessionid=" + sessionid + "; expires=" + http_time(expires) + "; HttpOnly; path=/;";
+	var new_cookie = "sessionid=" + sessionid + "; expires=" + http_time(expires) + "; path=/; HttpOnly;";
 
 	var data = {
 		type: "sessionid_auth",
