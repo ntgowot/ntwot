@@ -97,6 +97,8 @@ var initiallyFetched       = false;
 var lastLinkHover          = null; // [tileX, tileY, charX, charY]
 var lastTileHover          = null; // [type, tileX, tileY, (charX, charY)]
 var regionSelections       = [];
+var specialClientHooks     = {};
+var specialClientHookMap   = 0; // bitfield (starts at 0): [before char rendering, (future expansion)]
 
 // configuration
 var positionX              = 0; // client position in pixels
@@ -2154,8 +2156,21 @@ function moveCursor(direction, preserveVertPos, amount) {
 	return renderCursor(pos);
 }
 
+function markCharacterAsUndoable(tileX, tileY, charX, charY) {
+	var info = getCharInfo(tileX, tileY, charX, charY);
+	var link = getLink(tileX, tileY, charX, charY);
+	undoBuffer.push([tileX, tileY, charX, charY, info.char, info.color, link, info.bgColor, info.decoration, 0]);
+}
+
+function isCharLatestInUndoBuffer(tileX, tileY, charX, charY) {
+	if(!undoBuffer.top()) return false;
+	var latest = undoBuffer.top();
+	return (latest[0] == tileX & latest[1] == tileY && latest[2] == charX && latest[3] == charY);
+}
+
 // place a character
-function writeCharTo(char, charColor, tileX, tileY, charX, charY, noUndo, undoOffset, charBgColor) {
+// TODO: after refactoring this function, we will keep this header for legacy purposes
+function writeCharTo(char, charColor, tileX, tileY, charX, charY, undoFlags, undoOffset, charBgColor, dB, dI, dU, dS) {
 	if(!Tile.get(tileX, tileY)) {
 		Tile.set(tileX, tileY, blankTile());
 	}
@@ -2217,30 +2232,37 @@ function writeCharTo(char, charColor, tileX, tileY, charX, charY, noUndo, undoOf
 	// update cell properties (link positions)
 	tile.properties.cell_props = cell_props;
 
+	var cBold, cItalic, cUnder, cStrike, currDeco;
 	if(!isErase) {
 		currDeco = getCharTextDecorations(char);
 		char = clearCharTextDecorations(char);
 		char = detectCharEmojiCombinations(char) || char;
-		var cBold = textDecorationModes.bold;
-		var cItalic = textDecorationModes.italic;
-		var cUnder = textDecorationModes.under;
-		var cStrike = textDecorationModes.strike;
+		cBold = textDecorationModes.bold;
+		cItalic = textDecorationModes.italic;
+		cUnder = textDecorationModes.under;
+		cStrike = textDecorationModes.strike;
 		if(currDeco) {
 			cBold = cBold || currDeco.bold;
 			cItalic = cItalic || currDeco.italic;
 			cUnder = cUnder || currDeco.under;
 			cStrike = cStrike || currDeco.strike;
 		}
-		if(char == " ") { // don't let spaces be bold/italic
+		// don't let spaces be bold/italic
+		if(char == " ") {
 			cBold = false;
 			cItalic = false;
 		}
+		// parameter overrides
+		if(dB != null) cBold = dB ? true : false;
+		if(dI != null) cItalic = dI ? true : false;
+		if(dU != null) cUnder = dU ? true : false;
+		if(dS != null) cStrike = dS ? true : false;
 		char = setCharTextDecorations(char, cBold, cItalic, cUnder, cStrike);
 	}
 
 	// set char locally
 	var con = tile.content;
-	prevChar = con[charY * tileC + charX]
+	prevChar = con[charY * tileC + charX];
 	con[charY * tileC + charX] = char;
 	if(prevChar != char) hasChanged = true;
 	w.setTileRedraw(tileX, tileY);
@@ -2249,12 +2271,17 @@ function writeCharTo(char, charColor, tileX, tileY, charX, charY, noUndo, undoOf
 		if(charX == tileC - 1) w.setTileRedraw(tileX + 1, tileY);
 		if(charY == 0 && charX == tileC - 1) w.setTileRedraw(tileX + 1, tileY - 1);
 	}
-
-	if(hasChanged && (!noUndo || noUndo == -1)) {
-		if(noUndo != -1) {
+	var undoFlag_dontMarkUndo = undoFlags ? undoFlags & 1 : 0;
+	var undoFlag_dontStepBack = undoFlags ? (undoFlags >> 1) & 1 : 0;
+	var undoFlag_forceMarkUndo = undoFlags ? (undoFlags >> 2) & 1 : 0;
+	if(hasChanged && (!undoFlag_dontMarkUndo || undoFlag_dontStepBack) || undoFlag_forceMarkUndo) {
+		if(!undoFlag_dontStepBack) {
 			undoBuffer.trim();
 		}
-		undoBuffer.push([tileX, tileY, charX, charY, prevChar, prevColor, prevLink, prevBgColor, undoOffset]);
+		if(!isCharLatestInUndoBuffer(tileX, tileY, charX, charY)) {
+			// while the prevChar already stores deco info in the form of combining chars, it's stripped away once undo/redo is done
+			undoBuffer.push([tileX, tileY, charX, charY, prevChar, prevColor, prevLink, prevBgColor, getCharTextDecorations(prevChar), undoOffset]);
+		}
 	}
 
 	//TEMP
@@ -2283,6 +2310,8 @@ function writeCharTo(char, charColor, tileX, tileY, charX, charY, noUndo, undoOf
 	tellEdit.push(editArray); // track local changes
 	writeBuffer.push(editArray); // send edits to server
 	nextObjId++;
+
+	return hasChanged;
 }
 
 function undoWrite() {
@@ -2296,8 +2325,17 @@ function undoWrite() {
 	var color = edit[5];
 	var link = edit[6];
 	var bgColor = edit[7];
-	var offset = edit[8] || 0;
-	writeCharTo(char, color, tileX, tileY, charX, charY, -1, offset, bgColor);
+	var deco = edit[8] || {};
+	var offset = edit[9] || 0;
+	var dBold = Boolean(deco.bold);
+	var dItalic = Boolean(deco.italic);
+	var dUnder = Boolean(deco.under);
+	var dStrike = Boolean(deco.strike);
+	var undoFlags = 2;
+	if(link) {
+		undoFlags |= 4;
+	}
+	var hasChanged = writeCharTo(char, color, tileX, tileY, charX, charY, undoFlags, offset, bgColor, dBold, dItalic, dUnder, dStrike);
 	if(link) {
 		if(link.type == "url" && Permissions.can_urllink(state.userModel, state.worldModel)) {
 			linkQueue.push(["url", tileX, tileY, charX, charY, link.url]);
@@ -2307,7 +2345,7 @@ function undoWrite() {
 	}
 	renderCursor([edit[0], edit[1], edit[2], edit[3]]);
 	moveCursor("right", false, offset);
-	undoBuffer.pop();
+	if(hasChanged || link) undoBuffer.pop();
 }
 
 function redoWrite() {
@@ -2322,15 +2360,22 @@ function redoWrite() {
 	var color = edit[5];
 	var link = edit[6];
 	var bgColor = edit[7];
-	var offset = edit[8] || 0;
-	writeCharTo(char, color, tileX, tileY, charX, charY, -1, offset, bgColor);
+	var deco = edit[8] || {};
+	var offset = edit[9] || 0;
+	var dBold = Boolean(deco.bold);
+	var dItalic = Boolean(deco.italic);
+	var dUnder = Boolean(deco.under);
+	var dStrike = Boolean(deco.strike);
+	var undoFlags = 2;
 	if(link) {
-		if(link) {
-			if(link.type == "url" && Permissions.can_urllink(state.userModel, state.worldModel)) {
-				linkQueue.push(["url", tileX, tileY, charX, charY, link.url]);
-			} else if(link.type == "coord" && Permissions.can_coordlink(state.userModel, state.worldModel)) {
-				linkQueue.push(["coord", tileX, tileY, charX, charY, link.link_tileX, link.link_tileY]);
-			}
+		undoFlags |= 4;
+	}
+	writeCharTo(char, color, tileX, tileY, charX, charY, undoFlags, offset, bgColor, dBold, dItalic, dUnder, dStrike);
+	if(link) {
+		if(link.type == "url" && Permissions.can_urllink(state.userModel, state.worldModel)) {
+			linkQueue.push(["url", tileX, tileY, charX, charY, link.url]);
+		} else if(link.type == "coord" && Permissions.can_coordlink(state.userModel, state.worldModel)) {
+			linkQueue.push(["coord", tileX, tileY, charX, charY, link.link_tileX, link.link_tileY]);
 		}
 	}
 	renderCursor([edit[0], edit[1], edit[2], edit[3]]);
@@ -2402,7 +2447,7 @@ function writeChar(char, doNotMoveCursor, color, noNewline, undoCursorOffset, bg
 		};
 
 		w.emit("writeBefore", data);
-		writeCharTo(data.char, data.color, data.tileX, data.tileY, data.charX, data.charY, false, undoCursorOffset, data.bgColor);
+		writeCharTo(data.char, data.color, data.tileX, data.tileY, data.charX, data.charY, 0, undoCursorOffset, data.bgColor);
 		w.emit("write", data);
 	}
 }
@@ -2759,10 +2804,16 @@ var char_input_check = setInterval(function() {
 				charCount++;
 			}
 		} else if(item.type == "link") {
+			var undoTop = undoBuffer.top();
 			if(item.linkType == "url" && Permissions.can_urllink(state.userModel, state.worldModel)) {
 				linkQueue.push(["url", item.tileX, item.tileY, item.charX, item.charY, item.url]);
 			} else if(item.linkType == "coord" && Permissions.can_coordlink(state.userModel, state.worldModel)) {
 				linkQueue.push(["coord", item.tileX, item.tileY, item.charX, item.charY, item.coord_tileX, item.coord_tileY]);
+			}
+			// a link was potentially put over a character that was changed to an identical character,
+			// meaning it did not get added to the undo buffer.
+			if(!isCharLatestInUndoBuffer(item.tileX, item.tileY, item.charX, item.charY)) {
+				markCharacterAsUndoable(item.tileX, item.tileY, item.charX, item.charY);
 			}
 		} else if(item.type == "protect") {
 			var protType = item.protType;
@@ -4024,9 +4075,6 @@ function uncolorChar(tileX, tileY, charX, charY, colorClass) {
 var isTileLoaded = Tile.loaded;
 var isTileVisible = Tile.visible;
 
-var brOrder = [1, 8, 2, 16, 4, 32, 64, 128];
-var base64table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
 /*
 	Writability format (tiles and chars):
 		null: Writability of parent tile
@@ -4035,6 +4083,7 @@ var base64table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012345678
 		2: owners
 */
 function decodeCharProt(str) {
+	const base64table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 	var res = new Array(tileArea).fill(0);
 	var encoding = str.charAt(0);
 	str = str.substr(1);
@@ -4182,6 +4231,8 @@ var lcsShardCharVectors = [
 	[[2,0],[2,4],[0,2],[2,0]] 
 ];
 
+// 2x4 octant character lookup (relative char code -> bit pattern)
+// range: 0x1CD00 - 0x1CDE5
 var lcsOctantCharPoints = [
 	4, 6, 7, 8, 9, 11, 12, 13, 14, 16, 17, 18, 19, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
 	32, 33, 34, 35, 36, 37, 38, 39, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54,
@@ -4197,33 +4248,185 @@ var lcsOctantCharPoints = [
 	236, 237, 238, 239, 241, 242, 243, 244, 246, 247, 248, 249, 251, 253, 254
 ];
 
+var fracBlockTransforms = [
+	// relative offset: 0x2580 (until 0x2590)
+	[[2, 4/8],
+	[3, 1/8],
+	[3, 2/8],
+	[3, 3/8],
+	[3, 4/8],
+	[3, 5/8],
+	[3, 6/8],
+	[3, 7/8],
+	[0, 8/8],
+	[0, 7/8],
+	[0, 6/8],
+	[0, 5/8],
+	[0, 4/8],
+	[0, 3/8],
+	[0, 2/8],
+	[0, 1/8],
+	[1, 4/8]],
+
+	// relative offset: 0x2594 (until 0x2595)
+	[[2, 1/8],
+	[1, 1/8]],
+	
+	// relative offset: 0x1FB82 (until 0x1FB8B)
+	[[2, 2/8],
+	[2, 3/8],
+	[2, 5/8],
+	[2, 6/8],
+	[2, 7/8],
+	[1, 2/8],
+	[1, 3/8],
+	[1, 5/8],
+	[1, 6/8],
+	[1, 7/8]]
+];
+
 function isValidSpecialSymbol(charCode) {
-	if(charCode >= 0x2580 && charCode <= 0x259F) return true;
+	if(charCode >= 0x2580 && charCode <= 0x2590) return true;
+	if(charCode >= 0x2594 && charCode <= 0x259F) return true;
 	if(charCode >= 0x25E2 && charCode <= 0x25E5) return true;
-	if(charCode >= 0x1FB00 && charCode <= 0x1FBFF) return true;
 	if(charCode >= 0x1CD00 && charCode <= 0x1CDE5) return true;
+	if(charCode >= 0x1FB00 && charCode <= 0x1FB3B) return true;
+	if(charCode >= 0x1FB3C && charCode <= 0x1FB6F) return true;
+	if(charCode >= 0x1FB82 && charCode <= 0x1FB8B) return true;
+
 	switch(charCode) {
 		case 0x25B2: return true;
 		case 0x25BA: return true;
 		case 0x25BC: return true;
 		case 0x25C4: return true;
+		case 0x1CEA0: return true;
+		case 0x1CEA3: return true;
 		case 0x1CEA8: return true;
 		case 0x1CEAB: return true;
-		case 0x1CEA3: return true;
-		case 0x1CEA0: return true;
+		case 0x1FB9A: return true;
+		case 0x1FB9B: return true;
+		case 0x1FBE6: return true;
+		case 0x1FBE7: return true;
 	}
+
 	return false;
 }
 
-function fillBlockChar(charCode, textRender, x, y, clampW, clampH, flags) {
-	var isBold = flags ? flags & 1 : 0;
-	var isOverflow = flags ? flags & 2 : 0;
-	if(!isValidSpecialSymbol(charCode)) {
-		return false;
-	}
-	if(isOverflow) return true; // ignore
-	var transform = [0, 1]; // (left, right, up, down = 0, 1, 2, 3), percentage
+function draw2by2Char(charCode, textRender, x, y, width, height) {
+	// relative offset: 0x2596 - 0x259F
+	var pattern = [2, 1, 8, 11, 9, 14, 13, 4, 6, 7][charCode - 0x2596];
+	textRender.beginPath();
+	if(pattern & 8) textRender.rect(x, y, width / 2, height / 2);
+	if(pattern & 4) textRender.rect(x + width / 2, y, width / 2, height / 2);
+	if(pattern & 2) textRender.rect(x, y + height / 2, width / 2, height / 2);
+	if(pattern & 1) textRender.rect(x + width / 2, y + height / 2, width / 2, height / 2);
+	textRender.fill();
+}
 
+function draw2by3Char(charCode, textRender, x, y, width, height) {
+	var code = 0;
+	if(charCode >= 0x1FB00 && charCode <= 0x1FB13) code = charCode - 0x1FB00 + 1;
+	if(charCode >= 0x1FB14 && charCode <= 0x1FB27) code = charCode - 0x1FB00 + 2;
+	if(charCode >= 0x1FB28 && charCode <= 0x1FB3B) code = charCode - 0x1FB00 + 3;
+	textRender.beginPath();
+	for(var i = 0; i < 6; i++) {
+		if(!(code >> i & 1)) continue;
+		textRender.rect(x + (width / 2) * (i & 1), y + (height / 3) * (i >> 1), width / 2, height / 3);
+	}
+	textRender.fill();
+}
+
+function drawTriangleShardChar(charCode, textRender, x, y, width, height) {
+	var is90degTri = charCode >= 0x25E2 && charCode <= 0x25E5;
+	var isIsoTri = charCode == 0x25B2 || charCode == 0x25BA || charCode == 0x25BC || charCode == 0x25C4;
+
+	var vecIndex = charCode - 0x1FB3C;
+	if(charCode >= 0x1FB9A && charCode <= 0x1FB9B) {
+		vecIndex -= 42;
+	} else if(is90degTri) {
+		vecIndex = (charCode - 0x25E2) + 54;
+	} else if(isIsoTri) {
+		switch(charCode) {
+			case 0x25B2: vecIndex = 58; break;
+			case 0x25BA: vecIndex = 59; break;
+			case 0x25BC: vecIndex = 60; break;
+			case 0x25C4: vecIndex = 61; break;
+		}
+	}
+	var vecs = lcsShardCharVectors[vecIndex];
+	var gpX = [0, width / 2, width];
+	var gpY = [0, height / 3, height / 2, (height / 3) * 2, height];
+	textRender.beginPath();
+	for(var i = 0; i < vecs.length; i++) {
+		var vec = vecs[i];
+		var gx = gpX[vec[0]];
+		var gy = gpY[vec[1]];
+		if(i == 0) {
+			textRender.moveTo(x + gx, y + gy);
+		} else {
+			textRender.lineTo(x + gx, y + gy);
+		}
+	}
+	textRender.closePath();
+	textRender.fill();
+}
+
+function draw2by4Char(charCode, textRender, x, y, width, height) {
+	var code = 0;
+	if(charCode >= 0x1CD00 && charCode <= 0x1CDE5) {
+		code = lcsOctantCharPoints[charCode - 0x1CD00];
+	} else {
+		switch(charCode) {
+			case 0x1CEA8: code = 1; break;
+			case 0x1CEAB: code = 2; break;
+			case 0x1CEA3: code = 64; break;
+			case 0x1CEA0: code = 128; break;
+			case 0x1FBE6: code = 20; break;
+			case 0x1FBE7: code = 40; break;
+		}
+	}
+	if(!code) return false;
+	textRender.beginPath();
+	for(var py = 0; py < 4; py++) {
+		for(var px = 0; px < 2; px++) {
+			var idx = py * 2 + px;
+			if(code >> idx & 1) {
+				textRender.rect(x + px * (width / 2), y + py * (height / 4), width / 2, height / 4);
+			}
+		}
+	}
+	textRender.fill();
+}
+
+function drawFractionalBlockChar(charCode, textRender, x, y, width, height) {
+	var transform = null;
+	// basic fractional blocks
+	if(charCode >= 0x2580 && charCode <= 0x2590) {
+		transform = fracBlockTransforms[0][charCode - 0x2580];
+	} else if(charCode >= 0x2594 && charCode <= 0x2595) {
+		transform = fracBlockTransforms[1][charCode - 0x2594];
+	} else if(charCode >= 0x1FB82 && charCode <= 0x1FB8B) {
+		transform = fracBlockTransforms[2][charCode - 0x1FB82];
+	}
+	if(!transform) return;
+
+	var dir = transform[0];
+	var frac = transform[1];
+	var x2 = x + width - 1;
+	var y2 = y + height - 1;
+
+	switch(dir) {
+		case 0: x2 -= width - (width * frac); break;
+		case 1: x += width - (width * frac); break;
+		case 2: y2 -= height - (height * frac); break;
+		case 3: y += height - (height * frac); break;
+	}
+
+	textRender.fillRect(x, y, x2 - x + 1, y2 - y + 1);
+}
+
+function drawBlockChar(charCode, textRender, x, y, clampW, clampH) {
+	// since the char grid varies on other zoom levels, we must account for it to avoid line artifacts
 	var tmpCellW = clampW / tileC;
 	var tmpCellH = clampH / tileR;
 	var sx = Math.floor(x * tmpCellW);
@@ -4233,139 +4436,31 @@ function fillBlockChar(charCode, textRender, x, y, clampW, clampH, flags) {
 	tmpCellW = ex - sx;
 	tmpCellH = ey - sy;
 
-	switch(charCode) { // 1/8 blocks
-		case 0x2580: transform = [2, 4/8]; break;
-		case 0x2581: transform = [3, 1/8]; break;
-		case 0x2582: transform = [3, 2/8]; break;
-		case 0x2583: transform = [3, 3/8]; break;
-		case 0x2584: transform = [3, 4/8]; break;
-		case 0x2585: transform = [3, 5/8]; break;
-		case 0x2586: transform = [3, 6/8]; break;
-		case 0x2587: transform = [3, 7/8]; break;
-		case 0x2588: transform = [0, 8/8]; break; // full block
-		case 0x2589: transform = [0, 7/8]; break;
-		case 0x258A: transform = [0, 6/8]; break;
-		case 0x258B: transform = [0, 5/8]; break;
-		case 0x258C: transform = [0, 4/8]; break;
-		case 0x258D: transform = [0, 3/8]; break;
-		case 0x258E: transform = [0, 2/8]; break;
-		case 0x258F: transform = [0, 1/8]; break;
-		case 0x2590: transform = [1, 4/8]; break;
-		case 0x2594: transform = [2, 1/8]; break;
-		case 0x2595: transform = [1, 1/8]; break;
-		case 0x1FB82: transform = [2, 2/8]; break;
-		case 0x1FB83: transform = [2, 3/8]; break;
-		case 0x1FB84: transform = [2, 5/8]; break;
-		case 0x1FB85: transform = [2, 6/8]; break;
-		case 0x1FB86: transform = [2, 7/8]; break;
-		case 0x1FB87: transform = [1, 2/8]; break;
-		case 0x1FB88: transform = [1, 3/8]; break;
-		case 0x1FB89: transform = [1, 5/8]; break;
-		case 0x1FB8A: transform = [1, 6/8]; break;
-		case 0x1FB8B: transform = [1, 7/8]; break;
-		default:
-			var is2by2 = charCode >= 0x2596 && charCode <= 0x259F;
-			var is2by3 = charCode >= 0x1FB00 && charCode <= 0x1FB3B;
-			var is2by4 = charCode >= 0x1CD00 && charCode <= 0x1FBE7;
-			var is90degTri = charCode >= 0x25E2 && charCode <= 0x25E5;
-			var isIsoTri = charCode == 0x25B2 || charCode == 0x25BA || charCode == 0x25BC || charCode == 0x25C4;
-			var isTriangleShard = (charCode >= 0x1FB3C && charCode <= 0x1FB6F) ||
-									(charCode >= 0x1FB9A && charCode <= 0x1FB9B) ||
-									isBold && (is90degTri || isIsoTri);
-			if(is2by2) { // 2x2 blocks
-				var pattern = [2, 1, 8, 11, 9, 14, 13, 4, 6, 7][charCode - 0x2596];
-				textRender.beginPath();
-				if(pattern & 8) textRender.rect(sx, sy, tmpCellW / 2, tmpCellH / 2);
-				if(pattern & 4) textRender.rect(sx + tmpCellW / 2, sy, tmpCellW / 2, tmpCellH / 2);
-				if(pattern & 2) textRender.rect(sx, sy + tmpCellH / 2, tmpCellW / 2, tmpCellH / 2);
-				if(pattern & 1) textRender.rect(sx + tmpCellW / 2, sy + tmpCellH / 2, tmpCellW / 2, tmpCellH / 2);
-				textRender.fill();
-				return true;
-			} else if(is2by3) { // 2x3 blocks
-				var code = 0;
-				if(charCode >= 0x1FB00 && charCode <= 0x1FB13) code = charCode - 0x1FB00 + 1;
-				if(charCode >= 0x1FB14 && charCode <= 0x1FB27) code = charCode - 0x1FB00 + 2;
-				if(charCode >= 0x1FB28 && charCode <= 0x1FB3B) code = charCode - 0x1FB00 + 3;
-				textRender.beginPath();
-				for(var i = 0; i < 6; i++) {
-					if(!(code >> i & 1)) continue;
-					textRender.rect(sx + (tmpCellW / 2) * (i & 1), sy + (tmpCellH / 3) * (i >> 1), tmpCellW / 2, tmpCellH / 3);
-				}
-				textRender.fill();
-				return true;
-			} else if(isTriangleShard) { // LCS shard characters
-				var vecIndex = charCode - 0x1FB3C;
-				if(charCode >= 0x1FB9A && charCode <= 0x1FB9B) {
-					vecIndex -= 42;
-				} else if(is90degTri) {
-					vecIndex = (charCode - 0x25E2) + 54;
-				} else if(isIsoTri) {
-					switch(charCode) {
-						case 0x25B2: vecIndex = 58; break;
-						case 0x25BA: vecIndex = 59; break;
-						case 0x25BC: vecIndex = 60; break;
-						case 0x25C4: vecIndex = 61; break;
-					}
-				}
-				var vecs = lcsShardCharVectors[vecIndex];
-				var gpX = [0, tmpCellW / 2, tmpCellW];
-				var gpY = [0, tmpCellH / 3, tmpCellH / 2, (tmpCellH / 3) * 2, tmpCellH];
-				textRender.beginPath();
-				for(var i = 0; i < vecs.length; i++) {
-					var vec = vecs[i];
-					var gx = gpX[vec[0]];
-					var gy = gpY[vec[1]];
-					if(i == 0) {
-						textRender.moveTo(sx + gx, sy + gy);
-						continue;
-					}
-					textRender.lineTo(sx + gx, sy + gy);
-				}
-				textRender.closePath();
-				textRender.fill();
-				return true;
-			} else if(is2by4) { // 2x4 LCS octant characters
-				var code = 0;
-				if(charCode >= 0x1CD00 && charCode <= 0x1CDE5) {
-					code = lcsOctantCharPoints[charCode - 0x1CD00];
-				} else {
-					switch(charCode) {
-						case 0x1CEA8: code = 1; break;
-						case 0x1CEAB: code = 2; break;
-						case 0x1CEA3: code = 64; break;
-						case 0x1CEA0: code = 128; break;
-						case 0x1FBE6: code = 20; break;
-						case 0x1FBE7: code = 40; break;
-					}
-				}
-				if(!code) return false;
-				textRender.beginPath();
-				for(var py = 0; py < 4; py++) {
-					for(var px = 0; px < 2; px++) {
-						var idx = py * 2 + px;
-						if(code >> idx & 1) {
-							textRender.rect(sx + px * (tmpCellW / 2), sy + py * (tmpCellH / 4), tmpCellW / 2, tmpCellH / 4);
-						}
-					}
-				}
-				textRender.fill();
-				return true;
-			} else {
-				return false;
-			}
-	}
-	var dir = transform[0];
-	var frac = transform[1];
+	var isFractionalBlock = (charCode >= 0x2580 && charCode <= 0x2590) ||
+							(charCode >= 0x2594 && charCode <= 0x2595) ||
+							(charCode >= 0x1FB82 && charCode <= 0x1FB8B);
+	var is2by2 = charCode >= 0x2596 && charCode <= 0x259F;
+	var is2by3 = charCode >= 0x1FB00 && charCode <= 0x1FB3B;
+	var is2by4 = (charCode >= 0x1CD00 && charCode <= 0x1CDE5) ||
+					charCode == 0x1CEA8 || charCode == 0x1CEAB || charCode == 0x1CEA3 || 
+					charCode == 0x1CEA0 || charCode == 0x1FBE6 || charCode == 0x1FBE7;
+	var is90degTri = charCode >= 0x25E2 && charCode <= 0x25E5;
+	var isIsoTri = charCode == 0x25B2 || charCode == 0x25BA || charCode == 0x25BC || charCode == 0x25C4;
+	var isTriangleShard = (charCode >= 0x1FB3C && charCode <= 0x1FB6F) ||
+							(charCode >= 0x1FB9A && charCode <= 0x1FB9B) ||
+							(is90degTri || isIsoTri);
 
-	switch(dir) {
-		case 0: ex -= tmpCellW - (tmpCellW * frac); break;
-		case 1: sx += tmpCellW - (tmpCellW * frac); break;
-		case 2: ey -= tmpCellH - (tmpCellH * frac); break;
-		case 3: sy += tmpCellH - (tmpCellH * frac); break;
+	if(isFractionalBlock) { // basic fractional blocks (full, half, n/8)
+		drawFractionalBlockChar(charCode, textRender, sx, sy, tmpCellW, tmpCellH);
+	} else if(is2by2) { // 2x2 blocks
+		draw2by2Char(charCode, textRender, sx, sy, tmpCellW, tmpCellH);
+	} else if(is2by3) { // 2x3 blocks
+		draw2by3Char(charCode, textRender, sx, sy, tmpCellW, tmpCellH);
+	} else if(isTriangleShard) { // LCS shard characters
+		drawTriangleShardChar(charCode, textRender, sx, sy, tmpCellW, tmpCellH);
+	} else if(is2by4) { // 2x4 LCS octant characters
+		draw2by4Char(charCode, textRender, sx, sy, tmpCellW, tmpCellH);
 	}
-
-	textRender.fillRect(sx, sy, ex - sx, ey - sy);
-	return true;
 }
 
 function getCharTextDecorations(char) {
@@ -4432,6 +4527,29 @@ function clearCharTextDecorations(char) {
 	return char;
 }
 
+function dispatchCharClientHook(cCode, textRender, str, x, y, clampW, clampH) {
+	var funcs = specialClientHooks.renderchar;
+	if(!funcs.length) return false;
+	for(var i = 0; i < funcs.length; i++) {
+		var func = funcs[i];
+		var tilePos = getPos(str);
+		// duplicate from drawBlockChar - needs refactoring
+		var tmpCellW = clampW / tileC;
+		var tmpCellH = clampH / tileR;
+		var sx = Math.floor(x * tmpCellW);
+		var sy = Math.floor(y * tmpCellH);
+		var ex = Math.floor((x + 1) * tmpCellW);
+		var ey = Math.floor((y + 1) * tmpCellH);
+		tmpCellW = ex - sx;
+		tmpCellH = ey - sy;
+		var status = func(cCode, textRender, tilePos[1], tilePos[0], x, y, sx, sy, tmpCellW, tmpCellH);
+		if(status) {
+			return true;
+		}
+	}
+	return false;
+}
+
 function renderChar(textRender, x, y, clampW, clampH, str, tile, writability, props, offsetX, offsetY, charOverflowMode) {
 	var content = tile.content;
 	var colors = tile.properties.color;
@@ -4442,8 +4560,7 @@ function renderChar(textRender, x, y, clampW, clampH, str, tile, writability, pr
 	var fontX = x * cellW + offsetX;
 	var fontY = y * cellH + offsetY;
 
-	var char = content[y * tileC + x];
-	if(!char) char = " ";
+	var char = content[y * tileC + x] || " ";
 
 	var deco = null;
 	if(textDecorationsEnabled) {
@@ -4518,6 +4635,13 @@ function renderChar(textRender, x, y, clampW, clampH, str, tile, writability, pr
 		}
 	}
 
+	if(((specialClientHookMap >> 0) & 1) && !charOverflowMode) {
+		var status = dispatchCharClientHook(cCode, textRender, str, x, y, clampW, clampH);
+		if(status) {
+			return;
+		}
+	}
+
 	// don't render whitespaces
 	if(char == "\u0020" || char == "\u00A0") return;
 
@@ -4530,25 +4654,21 @@ function renderChar(textRender, x, y, clampW, clampH, str, tile, writability, pr
 		}
 	}
 
-	var fillBlockFlags = 0;
-	var isSpecial = false;
+	var isBold = deco && deco.bold;
+	var isItalic = deco && deco.italic;
+	var isHalfShard = ((cCode >= 0x25E2 && cCode <= 0x25E5) ||
+						cCode == 0x25B2 || cCode == 0x25C4 || cCode == 0x25BA || cCode == 0x25BC);
 	var checkIdx = 1;
 	if(char.codePointAt(0) > 65535) checkIdx = 2;
-	isSpecial = char.codePointAt(checkIdx) != void 0;
+	var isSpecial = char.codePointAt(checkIdx) != void 0;
 	isSpecial = isSpecial || (cCode >= 0x2500 && cCode <= 0x257F);
-	if(deco && deco.bold) fillBlockFlags |= 1;
-	
-	if(charOverflowMode) fillBlockFlags |= 2;
 
-	if(brBlockFill && (cCode & 0x2800) == 0x2800) { // render braille chars as rectangles
-		var dimX = cellW / 2;
-		var dimY = cellH / 4;
-		for(var b = 0; b < 8; b++) {
-			if((cCode & brOrder[b]) == 0) continue;
-			textRender.fillRect(fontX + (b % 2) * dimX, fontY + ((b / 2) | 0) * dimY, dimX, dimY);
+	if(window.fillBlockChar && !isValidSpecialSymbol(cCode) && window.fillBlockChar(cCode, textRender, x, y, clampW, clampH)) {
+		return; // temporary!
+	} else if(ansiBlockFill && isValidSpecialSymbol(cCode) && !(isHalfShard && !isBold)) {
+		if(!charOverflowMode) {
+			drawBlockChar(cCode, textRender, x, y, clampW, clampH);
 		}
-	} else if(ansiBlockFill && fillBlockChar(cCode, textRender, x, y, clampW, clampH, fillBlockFlags)) {
-		return;
 	} else { // character rendering
 		var tempFont = null;
 		var prevFont = null;
@@ -4556,10 +4676,8 @@ function renderChar(textRender, x, y, clampW, clampH, str, tile, writability, pr
 			prevFont = textRender.font;
 			tempFont = textRender.font;
 			if(isSpecial) tempFont = specialCharFont;
-			if(deco) {
-				if(deco.bold) tempFont = "bold " + tempFont;
-				if(deco.italic) tempFont = "italic " + tempFont;
-			}
+			if(isBold) tempFont = "bold " + tempFont;
+			if(isItalic) tempFont = "italic " + tempFont;
 			textRender.font = tempFont;
 		}
 		textRender.fillText(char, Math.round(fontX + XPadding), Math.round(fontY + textYOffset));
@@ -5008,8 +5126,9 @@ function renderTilesSelective() {
 				renderTile(x, y);
 				continue;
 			}
-			if(!tile.redraw) continue;
-			renderTile(x, y);
+			if(tile.redraw) {
+				renderTile(x, y);
+			}
 		}
 	}
 }
@@ -6357,6 +6476,17 @@ Object.assign(w, {
 		if(typeof rate != "number" || rate < 0 || isNaN(rate) || !isFinite(rate) || rate > 1000000) rate = 1000;
 		writeFlushRate = rate;
 		setWriteInterval();
+	},
+	registerHook: function(event, callback) {
+		event = event.toLowerCase();
+		if(event == "renderchar") {
+			// parameters: charCode, ctx, tileX, tileY, charX, charY, offsetX, offsetY, width, height
+			specialClientHookMap |= (1 << 0);
+			if(!specialClientHooks[event]) {
+				specialClientHooks[event] = [];
+			}
+			specialClientHooks[event].push(callback);
+		}
 	}
 });
 
@@ -6856,76 +6986,85 @@ var ws_functions = {
 			var pos = getPos(tileKey);
 			var tileX = pos[1];
 			var tileY = pos[0];
-			// if tile isn't loaded, load it blank
-			if(!tiles[tileKey]) {
-				Tile.set(tileX, tileY, blankTile());
+			var tile = data.tiles[tileKey];
+			if(!tile.properties) {
+				tile.properties = {};
 			}
-			if(!data.tiles[tileKey]) {
-				data.tiles[tileKey] = blankTile();
-			}
-			// TODO: untangle this part of the code
-			// processing bgColor is not necessary since it's nullable
-			if(!data.tiles[tileKey].properties.color) {
-				data.tiles[tileKey].properties.color = new Array(tileArea).fill(0);
-			}
-			if(data.tiles[tileKey].properties.char) {
-				data.tiles[tileKey].properties.char = decodeCharProt(data.tiles[tileKey].properties.char);
-			}
-			if(!tiles[tileKey].properties.color) {
-				tiles[tileKey].properties.color = new Array(tileArea).fill(0);
-			}
-			var newContent;
-			var newColors;
-			var newBgColors;
-			// get content and colors from new tile data
-			if(data.tiles[tileKey]) {
-				newContent = w.splitTile(data.tiles[tileKey].content);
-				if(data.tiles[tileKey].properties.color) {
-					newColors = data.tiles[tileKey].properties.color;
-				} else {
-					newColors = new Array(tileArea).fill(0);
+			var localTile = Tile.get(tileX, tileY);
+			if(!localTile) {
+				tile.content = w.splitTile(tile.content);
+				if(tile.properties.char) {
+					tile.properties.char = decodeCharProt(tile.properties.char);
 				}
-				newBgColors = data.tiles[tileKey].properties.bgcolor;
-			} else {
-				newContent = new Array(tileArea).fill(" ");
+				Tile.set(tileX, tileY, tile);
+				w.setTileRedraw(tileX, tileY);
+				continue;
 			}
-			// TODO: find a better way - this is very bad for memory
-			var oldContent = tiles[tileKey].content;
-			var oldColors = tiles[tileKey].properties.color.slice(0);
-			var oldBgColors = tiles[tileKey].properties.bgcolor ? tiles[tileKey].properties.bgcolor.slice(0) : null;
-			var charX = 0;
-			var charY = 0;
-			// compare data
-			for(var g = 0; g < tileArea; g++) {
-				var oChar = oldContent[g];
-				var nChar = newContent[g];
-				var oCol = oldColors[g];
-				var nCol = newColors[g];
-				var oBgCol = oldBgColors ? oldBgColors[g] : -1;
-				var nBgCol = newBgColors ? newBgColors[g] : -1;
-				if(oChar != nChar || oCol != nCol || oBgCol != nBgCol) {
+			var props = tile.properties;
+			var localProps = localTile.properties;
+
+			var charData = w.splitTile(tile.content);
+			var colorData = props.color;
+			var bgColorData = props.bgcolor;
+
+			var localCharData = localTile.content;
+			var localColorData = localProps.color;
+			var localBgColorData = localProps.bgcolor;
+
+			localProps.writability = props.writability;
+			if(props.cell_props) {
+				localProps.cell_props = props.cell_props;
+			} else {
+				delete localProps.cell_props;
+			}
+			if(props.char) {
+				localProps.char = decodeCharProt(props.char);
+			} else {
+				delete localProps.char;
+			}
+			if(!colorData) { // no remote color data, delete local
+				delete localProps.color;
+			} else if(!localColorData) { // remote color data exists, set local value to remote
+				localColorData = colorData; // we will be sharing a reference with the remote color data
+				localProps.color = localColorData;
+			}
+			if(!bgColorData) {
+				delete localProps.bgcolor;
+			} else if(!localBgColorData) {
+				localBgColorData = bgColorData; // again, same with the remote bg color data
+				localProps.bgcolor = localBgColorData;
+			}
+
+			for(var c = 0; c < tileArea; c++) {
+				var charX = c % tileC;
+				var charY = Math.floor(c / tileC);
+
+				var localChar = localCharData[c];
+				var remoteChar = charData[c];
+
+				var localColor = localColorData ? localColorData[c] : 0;
+				var remoteColor = colorData ? colorData[c] : 0;
+
+				var localBgColor = localBgColorData ? localBgColorData[c] : -1;
+				var remoteBgColor = bgColorData ? bgColorData[c] : -1;
+
+				if(localChar != remoteChar || localColor != remoteColor || localBgColor != remoteBgColor) {
 					// don't overwrite local changes until those changes are confirmed
 					if(!searchTellEdit(tileX, tileY, charX, charY)) {
-						oldContent[g] = nChar;
-						oldColors[g] = nCol;
-						if(!oldBgColors) oldBgColors = new Array(tileArea).fill(-1);
-						oldBgColors[g] = nBgCol;
+						localCharData[c] = remoteChar;
+						if(localColorData) {
+							localColorData[c] = remoteColor;
+						}
+						if(localBgColorData) {
+							localBgColorData[c] = remoteBgColor;
+						}
 					}
 					// briefly highlight these changes (10 at a time)
 					if(useHighlight && Tile.visible(tileX, tileY)) {
 						highlights.push([tileX, tileY, charX, charY]);
 					}
 				}
-				charX++;
-				if(charX >= tileC) {
-					charX = 0;
-					charY++;
-				}
 			}
-			tiles[tileKey].properties = data.tiles[tileKey].properties; // update tile
-			tiles[tileKey].content = oldContent; // update only necessary character updates
-			tiles[tileKey].properties.color = oldColors; // update only necessary color updates
-			tiles[tileKey].properties.bgcolor = oldBgColors; // update likewise
 			w.setTileRedraw(tileX, tileY);
 			if(bufferLargeChars) {
 				w.setTileRedraw(tileX, tileY - 1);
