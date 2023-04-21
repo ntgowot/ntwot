@@ -158,6 +158,7 @@ var textDecorationsEnabled = true; // bold, italic, underline, and strikethrough
 var keyConfig = {
 	reset: "ESC",
 	copyColor: "ALT+C",
+	copyBgColor: "ALT+B",
 	copyCharacterText: "CTRL+C",
 	copyCharacterMouse: "CTRL+M",
 	sidewaysScroll: "SHIFT",
@@ -1480,17 +1481,27 @@ document.addEventListener("keydown", event_keydown_copy_char);
 // color picker
 function event_keydown_copy_color(e) {
 	if(!worldFocused) return;
-	if(!checkKeyPress(e, keyConfig.copyColor)) return;
+	var keyCopyColor = checkKeyPress(e, keyConfig.copyColor);
+	var keyCopyBgColor = checkKeyPress(e, keyConfig.copyBgColor);
+	if(!keyCopyColor && !keyCopyBgColor) return;
+	e.preventDefault();
 	stopPasting();
 	// alt + c to use color of text cell (where mouse cursor is) as main color
+	// alt + b to overwrite your background color with the one the mouse cursor is on
 	var pos = currentPosition;
 	if(!pos) return;
 	var tileX = pos[0];
 	var tileY = pos[1];
 	var charX = pos[2];
 	var charY = pos[3];
-	var color = getCharColor(tileX, tileY, charX, charY);
-	w.changeColor(color);
+	var color;
+	if(keyCopyColor) {
+		color = getCharColor(tileX, tileY, charX, charY);
+		w.changeColor(color);
+	} else if(keyCopyBgColor) {
+		color = getCharBgColor(tileX, tileY, charX, charY);
+		w.changeBgColor(color);
+	}
 }
 document.addEventListener("keydown", event_keydown_copy_color);
 
@@ -3652,7 +3663,8 @@ function createWsPath() {
 
 var fetchInterval;
 var timesConnected = 0;
-function createSocket() {
+function createSocket(getChatHist) {
+	getChatHist = !!getChatHist;
 	socket = new ReconnectingWebSocket(ws_path);
 	w.socket = socket;
 	timesConnected++;
@@ -3682,10 +3694,10 @@ function createSocket() {
 		fetchInterval = setInterval(function() {
 			w.fetchUnloadedTiles();
 		}, checkTileFetchInterval);
-		if(timesConnected == 1) {
-			if(Permissions.can_chat(state.userModel, state.worldModel)) {
-				network.chathistory();
-			}
+		if ((timesConnected == 1 || getChatHist) &&
+		    Permissions.can_chat(state.userModel, state.worldModel))
+		{
+			network.chathistory();
 		}
 		timesConnected++;
 		if(w.receivingBroadcasts) {
@@ -6422,10 +6434,10 @@ Object.assign(w, {
 	resetDragCursor: function() {
 		defaultDragCursor = "move";
 	},
-	changeSocket: function(addr) {
+	changeSocket: function(addr, getChatHist) {
 		ws_path = addr;
 		socket.close();
-		createSocket();
+		createSocket(getChatHist);
 		clearTiles(true);
 		clearInterval(fetchInterval);
 	},
