@@ -58,6 +58,10 @@ function lineGen(x0, y0, x1, y1, max) {
 	return list;
 }
 
+function getDistance(x1, y1, x2, y2) {
+	return Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
+}
+
 function orderRangeABCoords(coordA, coordB) {
 	var tmp;
 	if(coordA[0] > coordB[0]) {
@@ -314,14 +318,6 @@ function escapeURLQuote(url) {
 function getPos(ref) {
 	ref = ref.split(",");
 	return [parseInt(ref[0]), parseInt(ref[1])];
-}
-
-function getPoolDimensions(tileWidth, tileHeight) {
-	var sizeX = Math.floor(1024 / tileWidth);
-	var sizeY = Math.floor(1024 / tileHeight);
-	if(sizeX < 1) sizeX = 1;
-	if(sizeY < 1) sizeY = 1;
-	return [sizeX, sizeY];
 }
 
 function html_tag_esc(str, non_breaking_space, newline_br) {
