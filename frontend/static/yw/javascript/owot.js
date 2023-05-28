@@ -1703,8 +1703,8 @@ function triggerUIClick() {
 			foundActiveSelection = true;
 		}
 	}
-	if(foundActiveSelection) return;
 	w.menu.hideNow();
+	return foundActiveSelection;
 }
 
 var dragStartX = 0;
@@ -1739,7 +1739,7 @@ function event_mousedown(e, arg_pageX, arg_pageY) {
 		dragPosY = positionY;
 		isDragging = true;
 	}
-	triggerUIClick();
+	var isActive = triggerUIClick();
 	var pos = getTileCoordsFromMouseCoords(pageX, pageY);
 	w.emit("mouseDown", {
 		tileX: pos[0],
@@ -1749,7 +1749,9 @@ function event_mousedown(e, arg_pageX, arg_pageY) {
 		pageX: pageX,
 		pageY: pageY
 	});
-	elm.owot.style.cursor = defaultDragCursor;
+	if(!isActive) {
+		elm.owot.style.cursor = defaultDragCursor;
+	}
 }
 document.addEventListener("mousedown", event_mousedown);
 
@@ -3307,7 +3309,7 @@ function event_touchstart(e) {
 	if(touches.length) {
 		event_mousemove(e, touches[0].pageX * zoomRatio, touches[0].pageY * zoomRatio);
 	}
-	triggerUIClick();
+	var uiActive = triggerUIClick();
 
 	var pos = getCenterTouchPosition(touches);
 	var x = pos[0];
@@ -3321,7 +3323,7 @@ function event_touchstart(e) {
 			touches[1].clientY * zoomRatio);
 	}
 	
-	if(draggingEnabled) {
+	if(draggingEnabled && !uiActive) {
 		dragStartX = x;
 		dragStartY = y;
 		dragPosX = positionX;
@@ -3386,6 +3388,8 @@ function event_touchmove(e) {
 		positionX = dragPosX + (x - dragStartX);
 		positionY = dragPosY + (y - dragStartY);
 	}
+	positionX = Math.round(positionX);
+	positionY = Math.round(positionY);
 	hasDragged = true;
 	
 	w.render();
