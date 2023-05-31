@@ -98,6 +98,7 @@ var lastTileHover          = null; // [type, tileX, tileY, (charX, charY)]
 var regionSelections       = [];
 var specialClientHooks     = {};
 var specialClientHookMap   = 0; // bitfield (starts at 0): [before char rendering, (future expansion)]
+var bgImageHasChanged      = false;
 
 // configuration
 var positionX              = 0; // client position in pixels
@@ -501,6 +502,7 @@ function loadBackgroundData(cb, timeout_cb) {
 		} else {
 			cb();
 		}
+		bgImageHasChanged = true;
 	}
 	backImgElm.onerror = function() {
 		error = true;
@@ -736,9 +738,16 @@ function updateRendererZoom(percentage) {
 	w.render(true);
 }
 
+function zoomGarbageCollect() {
+	if(tileCanvasPool.length > 100 || countTotalPoolPixels() > 10000000) {
+		cleanupDirtyTiles();
+	}
+	deleteEmptyPools();
+}
+
 // set user zoom
-function changeZoom(percentage, dontChangePosition) {
-	if(!dontChangePosition) {
+function changeZoom(percentage, isPartial) {
+	if(!isPartial) {
 		positionX /= zoom;
 		positionY /= zoom;
 	}
@@ -746,20 +755,15 @@ function changeZoom(percentage, dontChangePosition) {
 	if(userZoom < 0.2) userZoom = 0.2;
 	if(userZoom > 10) userZoom = 10;
 	updateRendererZoom(userZoom * deviceRatio() * 100);
-	if(!dontChangePosition) {
+	if(!isPartial) {
 		positionX *= zoom;
 		positionY *= zoom;
 		positionX = Math.trunc(positionX); // remove decimals
 		positionY = Math.trunc(positionY);
+		w.render();
+		zoomGarbageCollect();
 	}
-	w.render();
-
-	// cleanup
 	setZoombarValue();
-	if(tileCanvasPool.length > 100 || countTotalPoolPixels() > 10000000) {
-		cleanupDirtyTiles();
-	}
-	deleteEmptyPools();
 }
 
 function setZoombarValue() {
@@ -2310,8 +2314,8 @@ function coordinateAdd(tileX1, tileY1, charX1, charY1, tileX2, tileY2, charX2, c
 	return [
 		tileX1 + tileX2 + Math.floor((charX1 + charX2) / tileC),
 		tileY1 + tileY2 + Math.floor((charY1 + charY2) / tileR),
-		(charX1 + charX2) % tileC,
-		(charY1 + charY2) % tileR
+		(charX1 + charX2) - Math.floor((charX1 + charX2) / tileC) * tileC,
+		(charY1 + charY2) - Math.floor((charY1 + charY2) / tileR) * tileR
 	];
 }
 
@@ -3368,8 +3372,11 @@ function event_touchmove(e) {
 	var pos = getCenterTouchPosition(touches);
 	var x = pos[0];
 	var y = pos[1];
+
+	var isZooming = false;
 	
 	if(touches.length == 2) {
+		isZooming = true;
 		var distance = getDistance(touches[0].clientX * zoomRatio,
 			touches[0].clientY * zoomRatio,
 			touches[1].clientX * zoomRatio,
@@ -3392,8 +3399,11 @@ function event_touchmove(e) {
 	positionY = Math.round(positionY);
 	hasDragged = true;
 	
-	w.render();
 	e.preventDefault();
+	w.render();
+	if(isZooming) {
+		zoomGarbageCollect();
+	}
 }
 
 document.addEventListener("touchstart", event_touchstart);
