@@ -13,7 +13,6 @@ function init_dom() {
 	owot.style.display = "block";
 	owot.style.cursor = defaultCursor;
 	owotCtx = owot.getContext("2d");
-	owotCtx.globalCompositeOperation = "copy";
 	textInput = document.getElementById("textInput");
 	textInput.value = "";
 	linkElm = elm.link_element;
@@ -918,7 +917,7 @@ function mousemove_tileProtectAuto() {
 			var pos = i.split(",");
 			var tileX = parseInt(pos[1]);
 			var tileY = parseInt(pos[0]);
-			w.setTileRedraw(tileX, tileY);
+			w.setTileRedraw(tileX, tileY, true);
 		}
 	}
 	if(tileProtectAuto.shiftDown) {
@@ -989,7 +988,7 @@ function keydown_tileProtectAuto(e) {
 			} else if(precision == 1) {
 				delete selected[i];
 				uncolorChar(tileX, tileY, charX, charY, "qprot*");
-				w.setTileRedraw(tileX, tileY);
+				w.setTileRedraw(tileX, tileY, true);
 			}
 
 			if(idx >= keys.length) return;
@@ -1056,14 +1055,14 @@ function mousemove_linkAuto() {
 			var pos = i.split(",");
 			var tileX = parseInt(pos[1]);
 			var tileY = parseInt(pos[0]);
-			w.setTileRedraw(tileX, tileY);
+			w.setTileRedraw(tileX, tileY, true);
 		}
 	}
 	if(linkAuto.shiftDown) {
 		var elm = linkAuto.selected[tileY + "," + tileX + "," + charY + "," + charX];
 		if(elm !== void 0) {
 			uncolorChar(tileX, tileY, charX, charY, "qlink*");
-			w.setTileRedraw(tileX, tileY);
+			w.setTileRedraw(tileX, tileY, true);
 			delete linkAuto.selected[tileY + "," + tileX + "," + charY + "," + charX];
 		}
 	}
@@ -1116,7 +1115,7 @@ function keydown_linkAuto(e) {
 			updateAutoProg();
 			delete selected[i];
 			uncolorChar(tileX, tileY, charX, charY, "qlink*");
-			w.setTileRedraw(tileX, tileY);
+			w.setTileRedraw(tileX, tileY, true);
 
 			if(idx >= keys.length) return;
 			setTimeout(step, 4);
@@ -1610,7 +1609,7 @@ function stopLinkUI() {
 	var charY = lastLinkHover[3];
 	// remove highlight
 	uncolorChar(tileX, tileY, charX, charY, "link");
-	w.setTileRedraw(tileX, tileY);
+	w.setTileRedraw(tileX, tileY, true);
 }
 
 function removeTileProtectHighlight() {
@@ -1628,7 +1627,7 @@ function removeTileProtectHighlight() {
 			uncolorChar(tileX, tileY, charX, charY, "prot");
 		}
 	}
-	w.setTileRedraw(tileX, tileY);
+	w.setTileRedraw(tileX, tileY, true);
 }
 
 function stopTileUI() {
@@ -1790,7 +1789,7 @@ function renderCursor(coords) {
 		cursorCoords = null;
 		w.setTileRender(tileX, tileY);
 		if(hasBgColor) {
-			w.setTileRedraw(tileX, tileY);
+			w.setTileRedraw(tileX, tileY, true);
 		}
 	} else {
 		w.emit("cursorShow", {
@@ -1807,7 +1806,7 @@ function renderCursor(coords) {
 	w.setTileRender(coords[0], coords[1]);
 	// force redraw if the cursor is touching a background-colored cell
 	if(getCharBgColor() != -1) {
-		w.setTileRedraw(coords[0], coords[1]);
+		w.setTileRedraw(coords[0], coords[1], true);
 	}
 
 	var pixelX = (coords[0] * tileW) + (coords[2] * cellW) + positionX + Math.trunc(owotWidth / 2);
@@ -1858,7 +1857,7 @@ function removeCursor() {
 	cursorCoords = null;
 	w.setTileRender(remTileX, remTileY);
 	if(hasBgColor) {
-		w.setTileRedraw(remTileX, remTileY);
+		w.setTileRedraw(remTileX, remTileY, true);
 	}
 	w.emit("cursorHide", cursorPos);
 }
@@ -2124,11 +2123,11 @@ function writeCharTo(char, charColor, tileX, tileY, charX, charY, undoFlags, und
 	prevChar = con[charY * tileC + charX];
 	con[charY * tileC + charX] = char;
 	if(prevChar != char) hasChanged = true;
-	w.setTileRedraw(tileX, tileY);
+	w.setTileRedraw(tileX, tileY, true);
 	if(bufferLargeChars) {
-		if(charY == 0) w.setTileRedraw(tileX, tileY - 1);
-		if(charX == tileC - 1) w.setTileRedraw(tileX + 1, tileY);
-		if(charY == 0 && charX == tileC - 1) w.setTileRedraw(tileX + 1, tileY - 1);
+		if(charY == 0) w.setTileRedraw(tileX, tileY - 1, true);
+		if(charX == tileC - 1) w.setTileRedraw(tileX + 1, tileY, true);
+		if(charY == 0 && charX == tileC - 1) w.setTileRedraw(tileX + 1, tileY - 1, true);
 	}
 	var undoFlag_dontMarkUndo = undoFlags ? undoFlags & 1 : 0;
 	var undoFlag_dontStepBack = undoFlags ? (undoFlags >> 1) & 1 : 0;
@@ -2591,7 +2590,18 @@ function stabilizeTextInput() {
 	elm.textInput.selectionStart = elm.textInput.selectionEnd;
 }
 
+function event_input(e) {
+	if(e.inputType == "deleteContentBackward") {
+		if(getDate() - previousErase > 25 || !previousErase) {
+			moveCursor("left", true);
+			writeChar("\x08", true, null, false, 1);
+		}
+		previousErase = getDate();
+	}
+}
+
 elm.textInput.addEventListener("keydown", stabilizeTextInput);
+elm.textInput.addEventListener("input", event_input);
 
 var write_busy = false; // currently pasting
 var pasteInterval;
@@ -2604,16 +2614,9 @@ var char_input_check = setInterval(function() {
 		return;
 	}
 	var value = elm.textInput.value;
-	var hasErased = getDate() - previousErase < 1000;
-	if(!value) {
-		if(hasErased) {
+	if(!value || value == "\x7F") {
+		if(value != "\x7F") {
 			elm.textInput.value = "\x7F";
-		}
-		return;
-	}
-	if(value == "\x7F") {
-		if(!hasErased) {
-			elm.textInput.value = "";
 		}
 		return;
 	}
@@ -3185,7 +3188,7 @@ function event_mousemove(e, arg_pageX, arg_pageY) {
 			} else {
 				uncolorChar(tileX, tileY, charX, charY, "reg");
 			}
-			w.setTileRedraw(tileX, tileY);
+			w.setTileRedraw(tileX, tileY, true);
 		}
 		reg.lastSelectionHover = currentPosition;
 		reg.lastSelectionTiled = reg.tiled;
@@ -3201,7 +3204,7 @@ function event_mousemove(e, arg_pageX, arg_pageY) {
 				colorChar(newTileX, newTileY, newCharX, newCharY, "reg");
 			}
 			// re-render tile
-			w.setTileRedraw(newTileX, newTileY);
+			w.setTileRedraw(newTileX, newTileY, true);
 		}
 		reg.regionCoordB = currentPosition;
 		if(reg.regionCoordA && reg.regionCoordB) reg.setSelection(reg.regionCoordA, reg.regionCoordB);
@@ -3215,7 +3218,7 @@ function event_mousemove(e, arg_pageX, arg_pageY) {
 			var charX = lastLinkHover[2];
 			var charY = lastLinkHover[3];
 			uncolorChar(tileX, tileY, charX, charY, "link");
-			w.setTileRedraw(tileX, tileY);
+			w.setTileRedraw(tileX, tileY, true);
 		}
 		lastLinkHover = currentPosition;
 		var newTileX = currentPosition[0];
@@ -3225,7 +3228,7 @@ function event_mousemove(e, arg_pageX, arg_pageY) {
 		if(Tile.get(newTileX, newTileY)) {
 			colorChar(newTileX, newTileY, newCharX, newCharY, "link");
 			// re-render tile
-			w.setTileRedraw(newTileX, newTileY);
+			w.setTileRedraw(newTileX, newTileY, true);
 		}
 	}
 
@@ -3243,9 +3246,9 @@ function event_mousemove(e, arg_pageX, arg_pageY) {
 				}
 			} else if(precision == 1) {
 				uncolorChar(tileX, tileY, charX, charY, "prot");
-				w.setTileRedraw(tileX, tileY);
+				w.setTileRedraw(tileX, tileY, true);
 			}
-			w.setTileRedraw(tileX, tileY);
+			w.setTileRedraw(tileX, tileY, true);
 		}
 		var cp = currentPosition;
 		lastTileHover = [protectPrecision, cp[0], cp[1], cp[2], cp[3]];
@@ -3263,7 +3266,7 @@ function event_mousemove(e, arg_pageX, arg_pageY) {
 				if(Tile.get(newTileX, newTileY)) {
 					colorClasses.prot = w.protect_bg;
 					colorChar(newTileX, newTileY, newCharX, newCharY, "prot");
-					w.setTileRedraw(newTileX, newTileY);
+					w.setTileRedraw(newTileX, newTileY, true);
 				}
 			}
 		}
@@ -4142,7 +4145,7 @@ function clearAllGuestCursors() {
 			delete guestCursors[x];
 			delete guestCursorsByTile[i][x];
 		}
-		w.setTileRedraw(tileX, tileY);
+		w.setTileRedraw(tileX, tileY, true);
 	}
 }
 
@@ -4553,7 +4556,7 @@ function RegionSelection() {
 		} else {
 			uncolorChar(tileX, tileY, charX, charY, "reg");
 		}
-		w.setTileRedraw(tileX, tileY);
+		w.setTileRedraw(tileX, tileY, true);
 		this.deselect(successful);
 	}
 	var onselectionEvents = [];
@@ -5189,23 +5192,14 @@ Object.assign(w, {
 		reloadRenderer();
 	},
 	setRedraw: function() {
-		for(var t in tilePixelCache) {
-			if(tiles[t]) {
-				tiles[t].redraw = true;
-			}
-			var pos = getPos(t);
-			var tileX = pos[1];
-			var tileY = pos[0];
-			if(isTileVisible(tileX, tileY)) {
-				queueTile(tileX, tileY);
-			}
-		}
+		renderSerial++;
 	},
-	setTileRedraw: function(tileX, tileY, fastQueue) {
+	setTileRedraw: function(tileX, tileY, highPriority, fastQueue) {
 		var tile = Tile.get(tileX, tileY);
 		if(!tile) return;
 		w.hasSelectiveUpdated = true;
 		tile.redraw = true;
+		queueTile(tileX, tileY, highPriority);
 		if(fastQueue) tile.fastQueue = true;
 	},
 	setTileRender: function(tileX, tileY) {
@@ -5425,7 +5419,7 @@ Object.assign(w, {
 		if(cursorCoords) {
 			var cursorTileX = cursorCoords[0];
 			var cursorTileY = cursorCoords[1];
-			w.setTileRedraw(cursorTileX, cursorTileY);
+			w.setTileRedraw(cursorTileX, cursorTileY, true);
 		}
 	},
 	changeBgColor: function(color) {
@@ -5651,7 +5645,7 @@ function makeColorModal() {
 		if(!cursorCoords) return;
 		var cursorTileX = cursorCoords[0];
 		var cursorTileY = cursorCoords[1];
-		w.setTileRedraw(cursorTileX, cursorTileY);
+		w.setTileRedraw(cursorTileX, cursorTileY, true);
 	}, cursorOutlineEnabled);
 
 	colorShortcuts = document.createElement("div");
@@ -5931,11 +5925,11 @@ var ws_functions = {
 			}
 			var tileX = pos[1];
 			var tileY = pos[0];
-			w.setTileRedraw(tileX, tileY, fastQueue);
+			w.setTileRedraw(tileX, tileY, false, fastQueue);
 			if(bufferLargeChars) {
-				w.setTileRedraw(tileX, tileY - 1, fastQueue);
-				w.setTileRedraw(tileX + 1, tileY - 1, fastQueue);
-				w.setTileRedraw(tileX + 1, tileY, fastQueue);
+				w.setTileRedraw(tileX, tileY - 1, false, fastQueue);
+				w.setTileRedraw(tileX + 1, tileY - 1, false, fastQueue);
+				w.setTileRedraw(tileX + 1, tileY, false, fastQueue);
 			}
 		}
 		w.emit("afterFetch", data);
@@ -6121,7 +6115,7 @@ var ws_functions = {
 						}
 					}
 					if(uncolorChar(tileX, tileY, charX, charY, "err")) {
-						w.setTileRedraw(tileX, tileY);
+						w.setTileRedraw(tileX, tileY, true);
 					}
 					tellEdit.splice(x, 1);
 					// because the element has been removed, the length of the array is shorter
@@ -6144,7 +6138,7 @@ var ws_functions = {
 					continue;
 				}
 				colorChar(tileX, tileY, charX, charY, "err");
-				w.setTileRedraw(tileX, tileY);
+				w.setTileRedraw(tileX, tileY, true);
 				tellEdit[x][4] = getDate();
 				writeBuffer.push(tellEdit[x]);
 			}
@@ -6315,7 +6309,7 @@ var ws_functions = {
 					delete guestCursorsByTile[tilePos];
 				}
 			}
-			w.setTileRedraw(tileX, tileY);
+			w.setTileRedraw(tileX, tileY, true);
 		} else if(position) {
 			var csr = guestCursors[channel];
 			if(!csr) {
@@ -6329,7 +6323,7 @@ var ws_functions = {
 				if(Object.keys(guestCursorsByTile[prevTilePos]).length == 0) {
 					delete guestCursorsByTile[prevTilePos];
 				}
-				w.setTileRedraw(csr.tileX, csr.tileY);
+				w.setTileRedraw(csr.tileX, csr.tileY, true);
 			}
 			csr.tileX = position.tileX;
 			csr.tileY = position.tileY;
@@ -6340,7 +6334,7 @@ var ws_functions = {
 				guestCursorsByTile[tilePos] = {};
 			}
 			guestCursorsByTile[tilePos][channel] = csr;
-			w.setTileRedraw(csr.tileX, csr.tileY);
+			w.setTileRedraw(csr.tileX, csr.tileY, true);
 		}
 	},
 	error: function(data) {
