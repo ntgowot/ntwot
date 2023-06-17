@@ -99,6 +99,8 @@ var regionSelections       = [];
 var specialClientHooks     = {};
 var specialClientHookMap   = 0; // bitfield (starts at 0): [before char rendering, (future expansion)]
 var bgImageHasChanged      = false;
+var remoteBoundary         = { centerX: 0, centerY: 0, minX: 0, minY: 0, maxX: 0, maxY: 0 };
+var boundaryStatus         = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
 
 // configuration
 var positionX              = 0; // client position in pixels
@@ -707,7 +709,7 @@ function reloadRenderer() {
 	if(tileCanvasPool.length) {
 		removeAllTilesFromPools();
 		deleteAllPools();
-		w.render(true);
+		w.redraw();
 	}
 }
 
@@ -735,7 +737,7 @@ function updateRendererZoom(percentage) {
 	linkDiv.style.height = (cellH / zoomRatio) + "px";
 
 	// rerender everything
-	w.render(true);
+	w.redraw();
 }
 
 function zoomGarbageCollect() {
@@ -1414,6 +1416,7 @@ Tile.set = function(tileX, tileY, data) {
 		w.tile.count++;
 	}
 	tiles[str] = data;
+	expandLocalBoundary(tileX, tileY);
 	return data;
 }
 Tile.delete = function(tileX, tileY) {
@@ -2240,16 +2243,17 @@ function redoWrite() {
 	moveCursor("right", false, -offset + 1);
 }
 
-function writeCharToXY(char, charColor, x, y) {
+function writeCharToXY(char, charColor, x, y, charBgColor, dB, dI, dU, dS) {
 	writeCharTo(char, charColor,
 		Math.floor(x / tileC),
 		Math.floor(y / tileR),
 		x - Math.floor(x / tileC) * tileC,
-		y - Math.floor(y / tileR) * tileR);
+		y - Math.floor(y / tileR) * tileR,
+		null, null, charBgColor, dB, dI, dU, dS);
 }
 
 // type a character
-function writeChar(char, doNotMoveCursor, color, noNewline, undoCursorOffset, bgColor) {
+function writeChar(char, doNotMoveCursor, color, noNewline, undoCursorOffset, bgColor, dB, dI, dU, dS) {
 	char += "";
 	var charColor = color || YourWorld.Color;
 	var charBgColor = bgColor || YourWorld.BgColor;
@@ -2305,7 +2309,7 @@ function writeChar(char, doNotMoveCursor, color, noNewline, undoCursorOffset, bg
 		};
 
 		w.emit("writeBefore", data);
-		writeCharTo(data.char, data.color, data.tileX, data.tileY, data.charX, data.charY, 0, undoCursorOffset, data.bgColor);
+		writeCharTo(data.char, data.color, data.tileX, data.tileY, data.charX, data.charY, 0, undoCursorOffset, data.bgColor, dB, dI, dU, dS);
 		w.emit("write", data);
 	}
 }
@@ -2493,9 +2497,9 @@ function textcode_parser(value, coords, defaultColor, defaultBgColor) {
 					charY: charPos[3]
 				};
 			} else if(hCode == "*") { // skip character
-				index++;
-				chr = "";
-				doWriteChar = true;
+				index += 2;
+				chr = " ";
+				doWriteChar = false;
 			} else if(hCode == "x" || (hCode >= "A" && hCode <= "F")) { // colored paste
 				var cCol = "";
 				if(hCode == "x") {
@@ -2664,6 +2668,8 @@ var char_input_check = setInterval(function() {
 					return false;
 				}
 				charCount++;
+			} else {
+				moveCursor("right");
 			}
 		} else if(item.type == "link") {
 			var undoTop = undoBuffer.top();
@@ -3582,6 +3588,8 @@ function createSocket(getChatHist) {
 				}
 			}
 		}
+		clearRemoteBoundary();
+		updateRemoteBoundary();
 		w.fetchUnloadedTiles();
 		clearInterval(fetchInterval);
 		fetchInterval = setInterval(function() {
@@ -3715,6 +3723,45 @@ function cullRanges(map, width, height) {
 	return ranges;
 }
 
+function updateRemoteBoundary() {
+	var vis = w.getTileVisibility();
+	var centerX = Math.round(vis.centerX);
+	var centerY = Math.round(vis.centerY);
+	var x1 = boundaryStatus.minX;
+	var y1 = boundaryStatus.minY;
+	var x2 = boundaryStatus.maxX;
+	var y2 = boundaryStatus.maxY;
+
+	if(remoteBoundary.centerX == centerX && remoteBoundary.centerY == centerY &&
+		remoteBoundary.minX == x1 && remoteBoundary.minY == y1 &&
+		remoteBoundary.maxX == x2 && remoteBoundary.maxY == y2) return;
+
+	remoteBoundary.centerX = centerX;
+	remoteBoundary.centerY = centerY;
+	remoteBoundary.minX = x1;
+	remoteBoundary.minY = y1;
+	remoteBoundary.maxX = x2;
+	remoteBoundary.maxY = y2;
+
+	network.boundary(centerX, centerY, x1, y1, x2, y2);
+}
+
+function clearRemoteBoundary() {
+	remoteBoundary.centerX = 0;
+	remoteBoundary.centerY = 0;
+	remoteBoundary.minX = 0;
+	remoteBoundary.minY = 0;
+	remoteBoundary.maxX = 0;
+	remoteBoundary.maxY = 0;
+}
+
+function expandLocalBoundary(x, y) {
+	if(boundaryStatus.minX > x) boundaryStatus.minX = x;
+	if(boundaryStatus.minY > y) boundaryStatus.minY = y;
+	if(boundaryStatus.maxX < x) boundaryStatus.maxX = x;
+	if(boundaryStatus.maxY < y) boundaryStatus.maxY = y;
+}
+
 // fetches only unloaded tiles
 function getAndFetchTiles() {
 	var viewWidth = getWidth(fetchClientMargin);
@@ -3755,6 +3802,9 @@ function getAndFetchTiles() {
 			}
 		}
 	}
+	if(initiallyFetched) {
+		updateRemoteBoundary();
+	}
 	if(toFetch.length > 0) {
 		if(!initiallyFetched) {
 			initiallyFetched = true;
@@ -3779,15 +3829,27 @@ function getAndFetchTiles() {
 
 // clears all tiles outside the viewport (to free up memory)
 function clearTiles(all) {
-	var coordinates;
 	var visible = {};
-	if(!all) {
-		coordinates = getVisibleTiles();
-		// reference to tile coordinates (EG: "5,6")
-		visible = {};
-		for(var i = 0; i < coordinates.length; i++) {
-			visible[coordinates[i][1] + "," + coordinates[i][0]] = 1;
+	if(all) {
+		boundaryStatus.minX = 0;
+		boundaryStatus.minY = 0;
+		boundaryStatus.maxX = 0;
+		boundaryStatus.maxY = 0;
+	} else {
+		var visibleRange = getVisibleTileRange();
+		var x1 = visibleRange[0][0];
+		var y1 = visibleRange[0][1];
+		var x2 = visibleRange[1][0];
+		var y2 = visibleRange[1][1];
+		for(var y = y1; y <= y2; y++) {
+			for(var x = x1; x <= x2; x++) {
+				visible[y + "," + x] = 1;
+			}
 		}
+		boundaryStatus.minX = x1;
+		boundaryStatus.minY = y1;
+		boundaryStatus.maxX = x2;
+		boundaryStatus.maxY = y2;
 	}
 	for(var i in tiles) {
 		if(!(i in visible) || all) {
@@ -4392,22 +4454,22 @@ function buildMenu() {
 
 	menuOptions.grid = menu.addCheckboxOption("Toggle grid", function() {
 		gridEnabled = true;
-		w.render(true);
+		w.redraw();
 		setRedrawPatterned("square");
 		menu.showEntry(menuOptions.subgrid);
 	}, function() {
 		gridEnabled = false;
-		w.render(true);
+		w.redraw();
 		setRedrawPatterned("square");
 		menu.hideEntry(menuOptions.subgrid);
 	});
 	menuOptions.subgrid = menu.addCheckboxOption("Subgrid", function() {
 		subgridEnabled = true;
-		w.render(true);
+		w.redraw();
 		setRedrawPatterned("square");
 	}, function() {
 		subgridEnabled = false;
-		w.render(true);
+		w.redraw();
 		setRedrawPatterned("square");
 	});
 	menu.hideEntry(menuOptions.subgrid);
@@ -4426,10 +4488,10 @@ function buildMenu() {
 	if(state.background) {
 		menuOptions.backgroundEnabled = menu.addCheckboxOption("Background", function() {
 			backgroundEnabled = true;
-			w.render(true);
+			w.redraw();
 		}, function() {
 			backgroundEnabled = false;
-			w.render(true);
+			w.redraw();
 		}, true);
 	}
 	var zoomBar = document.createElement("input");
@@ -4683,6 +4745,10 @@ var networkHTTP = {
 			max_tileX: x2,
 			max_tileY: y2
 		};
+		var query = getQuerystring(window.location.search);
+		if(query.key) {
+			data.key = query.key;
+		}
 		if(opts.utf16) data.utf16 = true;
 		if(opts.array) data.array = true;
 		if(opts.content_only) data.content_only = true;
@@ -4980,7 +5046,18 @@ var network = {
 			}
 		}
 		network.transmit(data);
-	}
+	},
+	boundary: function(centerX, centerY, minX, minY, maxX, maxY) {
+		network.transmit({
+			kind: "boundary",
+			centerX: centerX,
+			centerY: centerY,
+			minX: minX,
+			minY: minY,
+			maxX: maxX,
+			maxY: maxY
+		});
+	}	
 };
 
 Object.assign(w, {
@@ -5192,14 +5269,14 @@ Object.assign(w, {
 		w.loadScript(jqueryURL, callback);
 	},
 	redraw: function() {
-		renderTiles(true);
+		renderSerial++;
+		w.hasUpdated = true;
 	},
 	reloadRenderer: function() {
 		reloadRenderer();
 	},
-	setRedraw: function() {
-		renderSerial++;
-		w.hasUpdated = true;
+	setRedraw: function() { // deprecated
+		w.redraw();
 	},
 	setTileRedraw: function(tileX, tileY, highPriority, fastQueue) {
 		var tile = Tile.get(tileX, tileY);
@@ -5228,7 +5305,7 @@ Object.assign(w, {
 		w.redraw();
 	},
 	render: function(redraw) {
-		if(redraw) w.setRedraw();
+		if(redraw) w.redraw();
 		w.hasUpdated = true;
 	},
 	changeFont: function(fontData, nr) {
@@ -5281,43 +5358,43 @@ Object.assign(w, {
 	changeSpecialCharFont: function(fontData, nr) {
 		specialFontTemplate = fontData;
 		specialCharFont = specialFontTemplate.replace("$", normFontSize(16 * zoom));
-		if(!nr) w.setRedraw();
+		if(!nr) w.redraw();
 	},
 	enableCombining: function(nr) {
 		combiningCharsEnabled = true;
-		if(!nr) w.setRedraw();
+		if(!nr) w.redraw();
 	},
 	disableCombining: function(nr) {
 		combiningCharsEnabled = false;
-		if(!nr) w.setRedraw();
+		if(!nr) w.redraw();
 	},
 	enableSurrogates: function(nr) {
 		surrogateCharsEnabled = true;
-		if(!nr) w.setRedraw();
+		if(!nr) w.redraw();
 	},
 	disableSurrogates: function(nr) {
 		surrogateCharsEnabled = false;
-		if(!nr) w.setRedraw();
+		if(!nr) w.redraw();
 	},
 	enableColors: function(nr) {
 		colorsEnabled = true;
-		if(!nr) w.setRedraw();
+		if(!nr) w.redraw();
 	},
 	disableColors: function(nr) {
 		colorsEnabled = false;
-		if(!nr) w.setRedraw();
+		if(!nr) w.redraw();
 	},
 	basic: function() {
 		w.disableSurrogates(1);
 		w.disableCombining(1);
 		w.disableColors(1);
-		w.setRedraw();
+		w.redraw();
 	},
 	restore: function() {
 		w.enableSurrogates(1);
 		w.enableCombining(1);
 		w.enableColors(1);
-		w.setRedraw();
+		w.redraw();
 	},
 	night: function(ignoreUnloadedPattern) {
 		styles.member = "#111";
@@ -5330,7 +5407,7 @@ Object.assign(w, {
 		} else if(!elm.owot.classList.contains("nightmode")) {
 			elm.owot.classList.add("nightmode");
 		}
-		w.setRedraw();
+		w.redraw();
 	},
 	day: function(reloadStyle) {
 		w.nightMode = 0;
@@ -5346,7 +5423,7 @@ Object.assign(w, {
 					styles.text = style.text;
 				}
 				menu_color(styles.menu);
-				w.setRedraw();
+				w.redraw();
 			});
 		} else {
 			var def = defaultStyles();
@@ -5354,7 +5431,7 @@ Object.assign(w, {
 			styles.owner = def.owner;
 			styles.public = def.public;
 			styles.text = def.text;
-			w.setRedraw();
+			w.redraw();
 		}
 	},
 	rotate: function(speed) {
@@ -5961,7 +6038,7 @@ var ws_functions = {
 		styles.member_text = data.colors.member_text;
 		styles.owner_text = data.colors.owner_text;
 		checkTextColorOverride();
-		w.render(true);
+		w.redraw();
 		menu_color(styles.menu);
 	},
 	tileUpdate: function(data) {
