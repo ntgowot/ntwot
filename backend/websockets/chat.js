@@ -660,7 +660,6 @@ module.exports = async function(ws, data, send, broadcast, server, ctx) {
 			return serverChatResponse(idstr, location);
 		},
 		stats: function() {
-			if(world.name != "" && world.name.toLowerCase() != "main" && world.name.toLowerCase() != "owot" && !is_owner && !user.superuser) return;
 			var stat = "Stats for world<br>";
 			stat += "Creation date: " + html_tag_esc(create_date(world.creationDate)) + "<br>";
 			stat += "View count: " + html_tag_esc(world.views);
@@ -865,6 +864,7 @@ module.exports = async function(ws, data, send, broadcast, server, ctx) {
 	var chatOpts = {
 		// Global and Page updates should not appear in worlds with chat disabled
 		isChat: true,
+		location,
 		clientId,
 		username: user.authenticated ? username_to_display.toUpperCase() : null
 	};

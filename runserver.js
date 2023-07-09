@@ -121,10 +121,6 @@ var testUviasIds = false;
 var serverLoaded = false;
 var isStopping = false;
 
-var acme = {
-	enabled: false,
-	pass: null
-};
 var valid_subdomains = []; // e.g. ["test"]
 var closed_client_limit = 1000 * 60 * 20; // 20 min
 var ws_req_per_second = 1000;
@@ -469,7 +465,7 @@ function setupZipLog() {
 		var file = fs.readFileSync(settings.paths.log);
 		if(file.length > 0) {
 			var log_data = fs.readFileSync(settings.paths.log);
-			zip_file.addFile("NWOT_LOG_" + Date.now() + ".txt", log_data, "", 0644);
+			zip_file.addFile("NWOT_LOG_" + Date.now() + ".txt", log_data, "", 0o644);
 			fs.truncateSync(settings.paths.log);
 		}
 	}
@@ -529,7 +525,6 @@ var pages = {
 	unprotect: require("./backend/pages/unprotect.js"),
 	unprotect_char: require("./backend/pages/unprotect_char.js"),
 	urllink: require("./backend/pages/urllink.js"),
-	well_known: require("./backend/pages/well_known.js"),
 	world_props: require("./backend/pages/world_props.js"),
 	world_style: require("./backend/pages/world_style.js"),
 	yourworld: require("./backend/pages/yourworld.js")
@@ -980,29 +975,6 @@ async function command_prompt() {
 		console.log("stop: close server\nres: restart\nmaint: maintenance mode\nsta: reload templates and static files");
 		return command_prompt();
 	}
-	if(input.startsWith("acme")) {
-		var args = input.split(" ");
-		var action = args[1];
-		var pass = args[2];
-		if(action == "on") {
-			var goodPass = true;
-			if(!pass || pass.length < 8) goodPass = false;
-			if(goodPass) {
-				acme.pass = pass;
-				acme.enabled = true;
-				console.log("Enabled acme with password: " + acme.pass);
-			} else {
-				console.log("Bad acme password");
-			}
-		} else if(action == "off") {
-			acme.enabled = false;
-			acme.pass = null;
-			console.log("Disabled acme");
-		} else {
-			console.log("acme command usage:\nacme on <password>: enable acme challenge\nacme off: disable acme challenge");
-		}
-		return command_prompt();
-	}
 	// REPL
 	try {
 		console.dir(eval(input), { colors: true });
@@ -1142,7 +1114,7 @@ function createEndpoints() {
 	registerEndpoint("favicon.ico", "/static/favicon.png", { no_login: true });
 	registerEndpoint("robots.txt", "/static/robots.txt", { no_login: true });
 	registerEndpoint("home", pages.home);
-	registerEndpoint(".well-known/*", pages.well_known, { no_login: true, binary_post_data: true });
+	registerEndpoint(".well-known/*", null);
 
 	registerEndpoint("accounts/login", pages.accounts.login);
 	registerEndpoint("accounts/logout", pages.accounts.logout);
@@ -2201,6 +2173,7 @@ function ws_broadcast(data, world_id, opts) {
 			// world_id is optional - setting it to undefined will broadcast to all clients
 			if(world_id == void 0 || client.sdata.world.id == world_id) {
 				if(opts.isChat) {
+					if(client.sdata.world.opts.noChatGlobal && opts.location == "global") return;
 					var isOwner = client.sdata.world.ownerId == client.sdata.user.id;
 					var isMember = !!client.sdata.world.members.map[client.sdata.user.id];
 					var chatPerm = client.sdata.world.feature.chat;
@@ -2836,7 +2809,6 @@ var global_data = {
 	static_data,
 	stopServer,
 	broadcastMonitorEvent,
-	acme,
 	uviasSendIdentifier,
 	client_cursor_pos,
 	loadShellFile,
