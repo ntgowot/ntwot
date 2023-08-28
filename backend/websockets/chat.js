@@ -72,7 +72,7 @@ module.exports = async function(ws, data, send, broadcast, server, ctx) {
 	}
 
 	var safeOrigin = false;
-	if(ws.sdata.origin == "https://ourworldoftext.com" || ws.sdata.origin == "https://testserver1.ourworldoftext.com") {
+	if(ws.sdata.origin == "https://ourworldoftext.com" || ws.sdata.origin == "https://test.ourworldoftext.com") {
 		safeOrigin = true;
 	}
 
@@ -111,7 +111,6 @@ module.exports = async function(ws, data, send, broadcast, server, ctx) {
 	}
 
 	var isMuted = false;
-	var isShadowMuted = false;
 	var isTestMessage = false;
 	var muteInfo = null;
 	var worldChatMutes = blocked_ips_by_world_id[world.id];
@@ -122,9 +121,6 @@ module.exports = async function(ws, data, send, broadcast, server, ctx) {
 		muteInfo = worldChatMutes[ipHeaderAddr];
 		if(muteInfo) {
 			isMuted = true;
-			if(muteInfo[1]) {
-				isShadowMuted = true;
-			}
 		}
 	}
 
@@ -132,7 +128,6 @@ module.exports = async function(ws, data, send, broadcast, server, ctx) {
 		var expTime = muteInfo[0];
 		if(!expTime || typeof expTime != "number" || Date.now() >= expTime) {
 			isMuted = false;
-			isShadowMuted = false;
 			delete worldChatMutes[ipHeaderAddr];
 		}
 	}
@@ -187,7 +182,6 @@ module.exports = async function(ws, data, send, broadcast, server, ctx) {
 
 		// staff
 		[1, "channel", null, "get info about a chat channel"],
-		[1, "delete", ["id", "timestamp"], "delete a chat message"],
 
 		// general
 		[0, "help", null, "list all commands", null],
@@ -202,6 +196,7 @@ module.exports = async function(ws, data, send, broadcast, server, ctx) {
 		[0, "unblockall", null, "unblock all users", null],
 		[0, "mute", ["id", "seconds"], "mute a user for everyone", "1220 9999"], // check for permission
 		[0, "clearmutes", null, "unmute all clients"], // check for permission
+		[0, "delete", ["id", "timestamp"], "delete a chat message", "1220 1693147307895"], // check for permission
 		[0, "color", ["color code"], "change your text color", "#FF00FF"], // client-side
 		[0, "chatcolor", ["color code"], "change your chat color", "#FF00FF"], // client-side
 		[0, "night", null, "enable night mode", null], // client-side
@@ -243,7 +238,7 @@ module.exports = async function(ws, data, send, broadcast, server, ctx) {
 			var desc = row[3];
 			var example = row[4];
 
-			if(command == "mute" || command == "clearmutes") {
+			if(command == "mute" || command == "clearmutes" || command == "delete") {
 				if(!user.staff && !is_owner) {
 					continue;
 				}
@@ -354,6 +349,9 @@ module.exports = async function(ws, data, send, broadcast, server, ctx) {
 			case "anon":
 				blocks.no_anon = true;
 				break;
+			case "reg":
+				blocks.no_reg = true;
+				break;
 			default:
 				id = san_nbr(id);
 				if (id < 0) return;
@@ -412,6 +410,8 @@ module.exports = async function(ws, data, send, broadcast, server, ctx) {
 			case "anon":
 				blocks.no_anon = false;
 				break;
+			case "reg":
+				blocks.no_reg = false;
 			default:
 				id = san_nbr(id);
 				if(id < 0) return;
@@ -456,6 +456,7 @@ module.exports = async function(ws, data, send, broadcast, server, ctx) {
 			ws.sdata.chat_blocks.block_all = false;
 			ws.sdata.chat_blocks.no_tell = false;
 			ws.sdata.chat_blocks.no_anon = false;
+			ws.sdata.chat_blocks.no_reg = false;
 			
 			var tblocks = tell_blocks[ipHeaderAddr];
 			if(tblocks) {
@@ -514,7 +515,7 @@ module.exports = async function(ws, data, send, broadcast, server, ctx) {
 
 			hasPrivateMsged = true;
 
-			if(isMuted && !isShadowMuted) return;
+			if(isMuted) return;
 
 			if(noClient) {
 				return serverChatResponse("User not found", location);
@@ -555,9 +556,11 @@ module.exports = async function(ws, data, send, broadcast, server, ctx) {
 				privateMessage: "from_me"
 			});
 			// if user has blocked TELLs, don't let the /tell-er know
-			if(client.sdata.chat_blocks[id] && (client.sdata.chat_blocks.id.includes(clientId) || // is ID of the /tell sender? (not destination)
-				(client.sdata.chat_blocks.block_all && opts.clientId != 0)) ||
-				(client.sdata.chat_blocks.no_tell)) return;
+			if(client.sdata.chat_blocks[id] && (client.sdata.chat_blocks.id.includes(clientId))) return; // is ID of the /tell sender? (not destination)
+			if(client.sdata.chat_blocks.block_all && opts.clientId != 0) return;
+			if(client.sdata.chat_blocks.no_tell) return;
+			if(client.sdata.chat_blocks.no_anon && !user.authenticated) return;
+			if(client.sdata.chat_blocks.no_reg && user.authenticated) return;
 				
 			// user has blocked the TELLer by IP
 			var tellblock = tell_blocks[client.sdata.ipAddress];
@@ -570,7 +573,6 @@ module.exports = async function(ws, data, send, broadcast, server, ctx) {
 				}
 			}
 
-			if(isShadowMuted || noClient) return;
 			wsSend(client, JSON.stringify(privateMessage));
 			if(clientIpObj && location == "global") {
 				clientIpObj[3] = Date.now();
@@ -607,7 +609,6 @@ module.exports = async function(ws, data, send, broadcast, server, ctx) {
 			if(!is_owner && !user.staff) return;
 			id = san_nbr(id);
 			time = san_nbr(time); // in seconds
-			var isShadow = flag == "shadow";
 
 			if(location == "global" && !user.staff) {
 				return serverChatResponse("You do not have permission to mute on global", location);
@@ -627,7 +628,7 @@ module.exports = async function(ws, data, send, broadcast, server, ctx) {
 					return serverChatResponse("Invalid location", location);
 				}
 				if(!blocked_ips_by_world_id[mute_wid]) blocked_ips_by_world_id[mute_wid] = {};
-				blocked_ips_by_world_id[mute_wid][muted_ip] = [muteDate, isShadow];
+				blocked_ips_by_world_id[mute_wid][muted_ip] = [muteDate];
 				return serverChatResponse("Muted client until " + html_tag_esc(create_date(muteDate)), location);
 			} else {
 				return serverChatResponse("Client not found", location);
@@ -673,10 +674,16 @@ module.exports = async function(ws, data, send, broadcast, server, ctx) {
 			return serverChatResponse(stat, location);
 		},
 		delete: async function(id, timestamp) {
+			if(!is_owner && !user.staff) return;
 			id = san_nbr(id);
 			timestamp = san_nbr(timestamp);
 			var wid = world.id;
-			if(location == "global") wid = 0;
+			if(location == "global") {
+				if(!user.staff) {
+					return serverChatResponse("You do not have permission to delete messages on global", location);
+				}
+				wid = 0;
+			}
 			var res = await remove_from_chatlog(wid, id, timestamp);
 			if(res == 0) {
 				return serverChatResponse("No messages deleted", location);
@@ -731,7 +738,7 @@ module.exports = async function(ws, data, send, broadcast, server, ctx) {
 		}
 	}
 
-	// chat proxy
+	// chat interceptor (e.g. for easy filtering)
 	var chatPlugin = loadPlugin();
 	if(chatPlugin && chatPlugin.chat) {
 		var check = false;
@@ -807,7 +814,7 @@ module.exports = async function(ws, data, send, broadcast, server, ctx) {
 				com.stats();
 				return;
 			case "delete":
-				if(staff) com.delete(commandArgs[1], commandArgs[2]);
+				com.delete(commandArgs[1], commandArgs[2]);
 				return;
 			case "passive":
 				com.passive(commandArgs[1]);
@@ -857,16 +864,14 @@ module.exports = async function(ws, data, send, broadcast, server, ctx) {
 		chatData.message = msg;
 	}
 
-	if(isMuted && !isShadowMuted) return;
+	if(isMuted) {
+		var expTime = muteInfo[0];
+		serverChatResponse("You are temporarily muted (" + uptime(expTime - Date.now()) + ")", location);
+		return;
+	}
 	var websocketChatData = Object.assign({
 		kind: "chat"
 	}, chatData);
-
-	// send chat message to the shadow-muted sender only
-	if(isShadowMuted) {
-		send(websocketChatData);
-		return;
-	}
 
 	var chatOpts = {
 		// Global and Page updates should not appear in worlds with chat disabled
