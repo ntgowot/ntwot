@@ -40,7 +40,8 @@ module.exports.GET = async function(req, write, server, ctx) {
 			chat: world.feature.chat,
 			showCursor: world.feature.showCursor,
 			colorText: world.feature.colorText,
-			colorCell: world.feature.colorCell
+			colorCell: world.feature.colorCell,
+			quickErase: world.feature.quickErase
 		},
 		theme: {
 			bg: world.theme.bg,
@@ -62,6 +63,7 @@ module.exports.GET = async function(req, write, server, ctx) {
 			writeInt: world.opts.writeInt,
 			desc: world.opts.desc,
 			noChatGlobal: world.opts.noChatGlobal,
+			noCopy: world.opts.noCopy,
 			defaultScriptPath: world.opts.defaultScriptPath
 		},
 		background: {

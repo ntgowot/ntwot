@@ -210,6 +210,7 @@ module.exports.GET = async function(req, write, server, ctx, params) {
 		chat_permission: world.feature.chat,
 		color_text: world.feature.colorText,
 		color_cell: world.feature.colorCell,
+		quick_erase: world.feature.quickErase,
 		show_cursor: world.feature.showCursor,
 
 		color,
@@ -229,6 +230,7 @@ module.exports.GET = async function(req, write, server, ctx, params) {
 		square_chars,
 		no_log_edits: world.opts.noLogEdits,
 		no_chat_global: world.opts.noChatGlobal,
+		no_copy: world.opts.noCopy,
 		half_chars,
 		mixed_chars,
 
@@ -440,6 +442,8 @@ module.exports.POST = async function(req, write, server, ctx) {
 		var show_cursor = validatePerms(post_data.show_cursor, 2, true);
 		var color_text = validatePerms(post_data.color_text, 2);
 		var color_cell = validatePerms(post_data.color_cell, 2, true);
+		var quick_erase = validatePerms(post_data.quick_erase, 2);
+		if(quick_erase == 0) quick_erase = 2; // we do not allow public access to quick erase
 		var membertiles_addremove = post_data.membertiles_addremove;
 		if(membertiles_addremove == "false") {
 			membertiles_addremove = 0;
@@ -474,6 +478,9 @@ module.exports.POST = async function(req, write, server, ctx) {
 		}
 		if(modifyWorldProp(world, "feature/colorCell", color_cell)) {
 			featureUpdates.push({type: "colorCell", value: color_cell});
+		}
+		if(modifyWorldProp(world, "feature/quickErase", quick_erase)) {
+			featureUpdates.push({type: "quickErase", value: quick_erase});
 		}
 		if(modifyWorldProp(world, "feature/memberTilesAddRemove", Boolean(membertiles_addremove))) {
 			featureUpdates.push({type: "memberTilesAddRemove", value: Boolean(membertiles_addremove)});
@@ -529,6 +536,7 @@ module.exports.POST = async function(req, write, server, ctx) {
 		var memkeyUpdated = false;
 		var charrateUpdated = false;
 		var writeintUpdated = false;
+		var noCopyUpdated = false;
 		var newCharrate = null;
 		if(user.superuser) {
 			if(!post_data.world_background) {
@@ -610,6 +618,12 @@ module.exports.POST = async function(req, write, server, ctx) {
 			modifyWorldProp(world, "opts/noChatGlobal", false);
 		}
 
+		if(post_data.no_copy == "on") {
+			noCopyUpdated = modifyWorldProp(world, "opts/noCopy", true);
+		} else {
+			noCopyUpdated = modifyWorldProp(world, "opts/noCopy", false);
+		}
+
 		if("ratelim_val" in post_data && "ratelim_per" in post_data) {
 			// 0/0 = disabled
 			// 0/1 = not writable
@@ -676,6 +690,18 @@ module.exports.POST = async function(req, write, server, ctx) {
 			}, world.id);
 		}
 
+		if(noCopyUpdated) {
+			ws_broadcast({
+				kind: "propUpdate",
+				props: [
+					{
+						type: "noCopy",
+						value: world.opts.noCopy
+					}
+				]
+			}, world.id);
+		}
+
 		if(post_data.memkey_enabled == "on") {
 			var key = post_data.memkey_value;
 			if(!key || typeof key != "string") {
@@ -690,8 +716,7 @@ module.exports.POST = async function(req, write, server, ctx) {
 				}
 			}
 		} else {
-			modifyWorldProp(world, "opts/memKey", "");
-			memkeyUpdated = true;
+			memkeyUpdated = modifyWorldProp(world, "opts/memKey", "");
 		}
 
 		if(post_data.meta_desc) {
@@ -739,7 +764,7 @@ module.exports.POST = async function(req, write, server, ctx) {
 				if(!e.sdata.userClient) return;
 				if(e.sdata.world.id == world.id) {
 					var readability = world.readability;
-					var memkeyAccess = world.opts.memKey && world.opts.memKey == e.sdata.keyQuery;
+					var memkeyAccess = Boolean(world.opts.memKey) && world.opts.memKey == e.sdata.keyQuery;
 					var isOwner = world.ownerId == e.sdata.user.id;
 					var isMember = !!world.members.map[e.sdata.user.id] || memkeyAccess;
 					if(readability == 1 && !isMember && !isOwner) {

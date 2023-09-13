@@ -671,6 +671,12 @@ function tileWriteLinks(callID, tile, options) {
 		var maxBytesGuarantee = 100;
 		var linkBytesMax = 10000;
 
+		var existingLink = cellProps[charY][charX].link;
+		if(existingLink && existingLink.type == "url") {
+			tile.url_cells--;
+			tile.url_bytes -= Buffer.byteLength(existingLink.url);
+		}
+
 		var newByteLen = byteLen;
 		if(byteLen > linkBytesMax) newByteLen = linkBytesMax;
 		tile.url_cells++;
@@ -896,52 +902,69 @@ function tileWriteProtections(callID, tile, options) {
 function tileWriteClear(callID, tile, options) {
 	var sharedData = cids[callID].sharedData;
 
-	var charRange = options.charRange;
+	var charX = options.charX;
+	var charY = options.charY;
+	var charWidth = options.charWidth;
+	var charHeight = options.charHeight;
 
-	if(!charRange) {
-		for(var x = 0; x < CONST.tileArea; x++) {
-			tile.content[x] = " ";
-			tile.prop_color[x] = 0;
-		}
-		tile.prop_bgcolor = null;
+	var is_owner = options.is_owner;
+	var is_member = options.is_member;
+	var world = options.world;
+
+	var feature_perm = world.feature.quickErase;
+
+	if(!is_owner && !is_member) {
+		IOProgress(callID);
+		return;
+	}
+	if(feature_perm == 2 && !is_owner) {
+		IOProgress(callID);
+		return;
+	} else if(feature_perm == 1 && !is_member) {
+		IOProgress(callID);
+		return;
+	}
+
+	if(charWidth == 0 && charHeight == 0) {
+		charWidth = CONST.tileCols;
+		charHeight = CONST.tileRows;
+	}
 	
-		for(var d in tile.prop_cell_props) {
-			delete tile.prop_cell_props[d];
-		}
-		tile.url_cells = 0;
-		tile.url_bytes = 0;
-		tile.content_updated = true;
-		tile.props_updated = true;
-	} else {
-		// validated via clear_areas module
-		var charX1 = charRange[0];
-		var charY1 = charRange[1];
-		var charX2 = charRange[2];
-		var charY2 = charRange[3];
-		for(var y = charY1; y <= charY2; y++) {
-			for(var x = charX1; x <= charX2; x++) {
-				var idx = y * CONST.tileCols + x;
-				tile.content[idx] = " ";
-				tile.prop_color[idx] = 0;
-				if(tile.prop_bgcolor !== null) {
-					tile.prop_bgcolor[idx] = -1;
-				}
-				if(tile.prop_cell_props[y]) {
-					if(tile.prop_cell_props[y][x]) {
-						var link = tile.prop_cell_props[y][x].link;
-						if(link && link.type == "url") {
-							tile.url_cells--;
-							tile.url_bytes -= Buffer.byteLength(link.url);
-						}
-						delete tile.prop_cell_props[y][x];
+	if(!charWidth || charWidth < 0) charWidth = 1;
+	if(!charHeight || charHeight < 0) charHeight = 1;
+	if(charWidth > CONST.tileCols) charWidth = CONST.tileCols;
+	if(charHeight > CONST.tileRows) charHeight = CONST.tileRows;
+
+	for(var y = 0; y < charHeight; y++) {
+		var cy = y + charY;
+		if(cy >= CONST.tileRows) break;
+		for(var x = 0; x < charWidth; x++) {
+			var cx = x + charX;
+			if(cx >= CONST.tileCols) break;
+			var idx = cy * CONST.tileCols + cx;
+			var char_writability = tile.prop_char[idx];
+			if(char_writability == null) char_writability = tile.writability;
+			if(char_writability == null) char_writability = world.writability;
+			if(char_writability == 2 && !is_owner) continue;
+			tile.content[idx] = " ";
+			tile.prop_color[idx] = 0;
+			if(tile.prop_bgcolor !== null) {
+				tile.prop_bgcolor[idx] = -1;
+			}
+			if(tile.prop_cell_props[cy]) {
+				if(tile.prop_cell_props[cy][cx]) {
+					var link = tile.prop_cell_props[cy][cx].link;
+					if(link && link.type == "url") {
+						tile.url_cells--;
+						tile.url_bytes -= Buffer.byteLength(link.url);
 					}
+					delete tile.prop_cell_props[cy][cx];
 				}
-				
 			}
 		}
-		if(tile.prop_bgcolor !== null && arrayIsEntirely(tile.prop_bgcolor, -1)) {
-			tile.prop_bgcolor = null;
-		}
+	}
+	if(tile.prop_bgcolor !== null && arrayIsEntirely(tile.prop_bgcolor, -1)) {
+		tile.prop_bgcolor = null;
 	}
 
 	tile.content_updated = true;
@@ -1420,9 +1443,10 @@ function processTileProtectRequest(call_id, data) {
 				var protArch = {
 					kind: "protect",
 					protect_type: data.protect_type,
-					precise: !!data.precise,
-					charX: data.charX,
-					charY: data.charY
+					charX: data.charX || void 0,
+					charY: data.charY || void 0,
+					charWidth: data.charWidth || void 0,
+					charHeight: data.charHeight || void 0,
 				};
 				var editData = "@" + JSON.stringify(protArch);
 				appendToEditLogQueue(tileX, tileY, 0, editData, world.id, Date.now());
@@ -1453,7 +1477,10 @@ function processTileClearRequest(call_id, data) {
 			if(!data.no_log_edits) {
 				var editData = "@" + JSON.stringify({
 					kind: "clear_tile",
-					charRange: data.charRange || void 0
+					charX: data.charX || void 0,
+					charY: data.charY || void 0,
+					charWidth: data.charWidth || void 0,
+					charHeight: data.charHeight || void 0,
 				});
 				appendToEditLogQueue(tileX, tileY, 0, editData, world.id, Date.now());
 			}

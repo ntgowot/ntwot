@@ -34,9 +34,17 @@ var Permissions = {
 	can_paste: function(user, world) {
 		return Permissions.user_matches_perm(user, world, world.feature_paste);
 	},
+	can_copy: function(user, world) {
+		if(user.is_owner || user.is_member) return true;
+		return !world.no_copy;
+	},
 	can_protect_tiles: function(user, world) {
 		if(user.is_owner) return true;
 		return world.feature_membertiles_addremove && user.is_member;
+	},
+	can_erase: function(user, world) {
+		if(user.is_owner) return true;
+		return Permissions.user_matches_perm(user, world, world.quick_erase);
 	},
 	can_read: function(user, world) {
 		return Permissions.user_matches_perm(user, world, world.readability);

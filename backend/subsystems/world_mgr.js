@@ -64,6 +64,7 @@ var world_default_props = {
 	show_cursor: -1,
 	color_cell: -1,
 	color_text: 0,
+	quick_erase: 2,
 	custom_menu_color: "",
 	custom_public_text_color: "",
 	custom_member_text_color: "",
@@ -72,6 +73,7 @@ var world_default_props = {
 	square_chars: false,
 	no_log_edits: false,
 	no_chat_global: false,
+	no_copy: false,
 	half_chars: false,
 	char_rate: "",
 	mem_key: "",
@@ -170,7 +172,8 @@ function makeWorldObject() {
 			chat: 0,
 			showCursor: 0,
 			colorText: 0,
-			colorCell: 0
+			colorCell: 0,
+			quickErase: 0
 		},
 		theme: {
 			bg: "",
@@ -189,6 +192,7 @@ function makeWorldObject() {
 			squareChars: false,
 			noLogEdits: false,
 			noChatGlobal: false,
+			noCopy: false,
 			halfChars: false,
 			charRate: "",
 			writeInt: 0,
@@ -269,6 +273,7 @@ function loadWorldIntoObject(world, wobj) {
 	wobj.feature.showCursor = getAndProcWorldProp(wprops, "show_cursor");
 	wobj.feature.colorText = getAndProcWorldProp(wprops, "color_text");
 	wobj.feature.colorCell = getAndProcWorldProp(wprops, "color_cell");
+	wobj.feature.quickErase = getAndProcWorldProp(wprops, "quick_erase");
 
 	wobj.theme.bg = world.custom_bg;
 	wobj.theme.cursor = world.custom_cursor;
@@ -285,6 +290,7 @@ function loadWorldIntoObject(world, wobj) {
 	wobj.opts.squareChars = getAndProcWorldProp(wprops, "square_chars");
 	wobj.opts.noLogEdits = getAndProcWorldProp(wprops, "no_log_edits");
 	wobj.opts.noChatGlobal = getAndProcWorldProp(wprops, "no_chat_global");
+	wobj.opts.noCopy = getAndProcWorldProp(wprops, "no_copy");
 	wobj.opts.halfChars = getAndProcWorldProp(wprops, "half_chars");
 	wobj.opts.charRate = getAndProcWorldProp(wprops, "char_rate");
 	wobj.opts.memKey = getAndProcWorldProp(wprops, "mem_key");
@@ -432,6 +438,7 @@ async function commitWorld(world) {
 		"feature/showCursor",
 		"feature/colorText",
 		"feature/colorCell",
+		"feature/quickErase",
 		"theme/menu",
 		"theme/publicText",
 		"theme/memberText",
@@ -440,6 +447,7 @@ async function commitWorld(world) {
 		"opts/squareChars",
 		"opts/noLogEdits",
 		"opts/noChatGlobal",
+		"opts/noCopy",
 		"opts/halfChars",
 		"opts/charRate",
 		"opts/memKey",
@@ -463,6 +471,7 @@ async function commitWorld(world) {
 		show_cursor: world.feature.showCursor,
 		color_text: world.feature.colorText,
 		color_cell: world.feature.colorCell,
+		quick_erase: world.feature.quickErase,
 		custom_menu_color: world.theme.menu,
 		custom_public_text_color: world.theme.publicText,
 		custom_member_text_color: world.theme.memberText,
@@ -471,6 +480,7 @@ async function commitWorld(world) {
 		square_chars: world.opts.squareChars,
 		no_log_edits: world.opts.noLogEdits,
 		no_chat_global: world.opts.noChatGlobal,
+		no_copy: world.opts.noCopy,
 		half_chars: world.opts.halfChars,
 		char_rate: world.opts.charRate,
 		mem_key: world.opts.memKey,
