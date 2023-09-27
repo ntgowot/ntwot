@@ -1,0 +1,5 @@
+entrypoint = "main.js"
+run = "npm install && node main.js"
+
+[nix]
+channel = "stable-22_11"

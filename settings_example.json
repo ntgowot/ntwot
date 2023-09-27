@@ -36,17 +36,17 @@
 	"error_log": true,
 
 	"paths": {
-		"database": "../nwotdata/nwot.sqlite",
-		"edits": "../nwotdata/edits.sqlite",
-		"images": "../nwotdata/images.sqlite",
-		"misc": "../nwotdata/misc.sqlite",
-		"chat_history": "../nwotdata/chat_history.sqlite",
-		"log": "../nwotdata/nwot_log.log",
-		"zip_log": "../nwotdata/nwot_error_logs.zip",
-		"uncaught": "../nwotdata/exc.err",
-		"restr": "../nwotdata/restr.txt",
-		"restr_cg1": "../nwotdata/restr_cg1.txt",
-		"static_shortcuts": "../nwotdata/static_shortcuts.txt",
+		"database": "nwotdata/nwot.sqlite",
+		"edits": "nwotdata/edits.sqlite",
+		"images": "nwotdata/images.sqlite",
+		"misc": "nwotdata/misc.sqlite",
+		"chat_history": "nwotdata/chat_history.sqlite",
+		"log": "nwotdata/nwot_log.log",
+		"zip_log": "nwotdata/nwot_error_logs.zip",
+		"uncaught": "nwotdata/exc.err",
+		"restr": "nwotdata/restr.txt",
+		"restr_cg1": "nwotdata/restr_cg1.txt",
+		"static_shortcuts": "nwotdata/static_shortcuts.txt",
 		"uvias_css": ""
 	},
 
