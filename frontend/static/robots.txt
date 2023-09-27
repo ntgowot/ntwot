@@ -1,2 +1,2 @@
-# unused
-# Last updated October 29, 2017
+User-agent: *
+Disallow: /
