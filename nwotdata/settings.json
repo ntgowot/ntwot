@@ -1,0 +1,61 @@
+{
+	"version": "2.1",
+
+	"website": "https://ourworldoftext.com/",
+
+	"ssl_enabled": false,
+	"ssl": {
+		"private_key": "../pem_dir/privkey.pem",
+		"cert": "../pem_dir/cert.pem",
+		"chain": "../pem_dir/chain.pem"
+	},
+
+	"port": 8080,
+	"test_port": 9090,
+	"ip": null,
+
+	"monitor": {
+		"enabled": false,
+		"port": null,
+		"ip": null,
+		"redirect": null,
+		"credentials": {
+			"user": "",
+			"pass": ""
+		}
+	},
+
+	"account_system": "local",
+
+	"pg_db": {
+		"user": "",
+		"host": "",
+		"database": ""
+	},
+
+	"error_log": true,
+
+	"paths": {
+		"database": "nwotdata/nwot.sqlite",
+		"edits": "nwotdata/edits.sqlite",
+		"images": "nwotdata/images.sqlite",
+		"misc": "nwotdata/misc.sqlite",
+		"chat_history": "nwotdata/chat_history.sqlite",
+		"log": "nwotdata/nwot_log.log",
+		"zip_log": "nwotdata/nwot_error_logs.zip",
+		"uncaught": "nwotdata/exc.err",
+		"restr": "nwotdata/restr.txt",
+		"restr_cg1": "nwotdata/restr_cg1.txt",
+		"static_shortcuts": "nwotdata/static_shortcuts.txt",
+		"uvias_css": ""
+	},
+
+	"email": {
+		"enabled": false,
+		"username": "email@site.com",
+		"password": "password123",
+		"display_email": "\"Our World of Text\" <email@site.com>"
+	},
+
+	"activation_key_days_expire": 3
+}
