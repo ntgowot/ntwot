@@ -631,17 +631,7 @@ function drawFractionalBlockChar(charCode, textRender, x, y, width, height) {
 	textRender.fillRect(x, y, x2 - x + 1, y2 - y + 1);
 }
 
-function drawBlockChar(charCode, textRender, x, y, clampW, clampH) {
-	// since the char grid varies on other zoom levels, we must account for it to avoid line artifacts
-	var tmpCellW = clampW / tileC;
-	var tmpCellH = clampH / tileR;
-	var sx = Math.floor(x * tmpCellW);
-	var sy = Math.floor(y * tmpCellH);
-	var ex = Math.floor((x + 1) * tmpCellW);
-	var ey = Math.floor((y + 1) * tmpCellH);
-	tmpCellW = ex - sx;
-	tmpCellH = ey - sy;
-
+function drawBlockChar(charCode, textRender, x, y, cellW, cellH) {
 	var isFractionalBlock = (charCode >= 0x2580 && charCode <= 0x2590) ||
 							(charCode >= 0x2594 && charCode <= 0x2595) ||
 							(charCode >= 0x1FB82 && charCode <= 0x1FB8B);
@@ -657,24 +647,23 @@ function drawBlockChar(charCode, textRender, x, y, clampW, clampH) {
 							(is90degTri || isIsoTri);
 
 	if(isFractionalBlock) { // basic fractional blocks (full, half, n/8)
-		drawFractionalBlockChar(charCode, textRender, sx, sy, tmpCellW, tmpCellH);
+		drawFractionalBlockChar(charCode, textRender, x, y, cellW, cellH);
 	} else if(is2by2) { // 2x2 blocks
-		draw2by2Char(charCode, textRender, sx, sy, tmpCellW, tmpCellH);
+		draw2by2Char(charCode, textRender, x, y, cellW, cellH);
 	} else if(is2by3) { // 2x3 blocks
-		draw2by3Char(charCode, textRender, sx, sy, tmpCellW, tmpCellH);
+		draw2by3Char(charCode, textRender, x, y, cellW, cellH);
 	} else if(isTriangleShard) { // LCS shard characters
-		drawTriangleShardChar(charCode, textRender, sx, sy, tmpCellW, tmpCellH);
+		drawTriangleShardChar(charCode, textRender, x, y, cellW, cellH);
 	} else if(is2by4) { // 2x4 LCS octant characters
-		draw2by4Char(charCode, textRender, sx, sy, tmpCellW, tmpCellH);
+		draw2by4Char(charCode, textRender, x, y, cellW, cellH);
 	}
 }
 
-function dispatchCharClientHook(cCode, textRender, str, x, y, clampW, clampH) {
+function dispatchCharClientHook(cCode, textRender, tileX, tileY, x, y, clampW, clampH) {
 	var funcs = specialClientHooks.renderchar;
 	if(!funcs.length) return false;
 	for(var i = 0; i < funcs.length; i++) {
 		var func = funcs[i];
-		var tilePos = getPos(str);
 		// duplicate from drawBlockChar - needs refactoring
 		var tmpCellW = clampW / tileC;
 		var tmpCellH = clampH / tileR;
@@ -684,7 +673,7 @@ function dispatchCharClientHook(cCode, textRender, str, x, y, clampW, clampH) {
 		var ey = Math.floor((y + 1) * tmpCellH);
 		tmpCellW = ex - sx;
 		tmpCellH = ey - sy;
-		var status = func(cCode, textRender, tilePos[1], tilePos[0], x, y, sx, sy, tmpCellW, tmpCellH);
+		var status = func(cCode, textRender, tileX, tileY, x, y, sx, sy, tmpCellW, tmpCellH);
 		if(status) {
 			return true;
 		}
@@ -692,18 +681,14 @@ function dispatchCharClientHook(cCode, textRender, str, x, y, clampW, clampH) {
 	return false;
 }
 
-function renderChar(textRender, x, y, clampW, clampH, str, tile, writability, props, offsetX, offsetY, charOverflowMode) {
-	var content = tile.content;
-	var colors = tile.properties.color;
+function renderChar(textRender, offsetX, offsetY, char, color, cellW, cellH, protectionValue, linkType, highlight, charX, charY, tileX, tileY, isOverflow) {
 	var hasDrawn = false;
 
 	// adjust baseline
 	var textYOffset = cellH - (5 * zoom);
 
-	var fontX = x * cellW + offsetX;
-	var fontY = y * cellH + offsetY;
-
-	var char = content[y * tileC + x] || " ";
+	var fontX = offsetX;
+	var fontY = offsetY;
 
 	var deco = null;
 	if(textDecorationsEnabled) {
@@ -713,45 +698,41 @@ function renderChar(textRender, x, y, clampW, clampH, str, tile, writability, pr
 	char = resolveCharEmojiCombinations(char);
 
 	var cCode = char.codePointAt(0);
-	if(charOverflowMode) {
+	if(isOverflow) {
 		if(cCode < 1024 && !deco) return;
 		if(cCode == 0xFDFD) return;
 		if(cCode >= 0x12427 && cCode <= 0x1242B) return;
 	}
 
-	// fill background if defined
-	if(coloredChars[str] && coloredChars[str][y] && coloredChars[str][y][x]) {
-		var color = coloredChars[str][y][x];
-		if(Array.isArray(color)) {
-			color = color[color.length - 1];
+	// fill background if defined.
+	// this should not be confused with background cell colors.
+	if(highlight) {
+		if(Array.isArray(highlight)) {
+			highlight = highlight[highlight.length - 1];
 		}
-		color = colorClasses[color];
-		textRender.fillStyle = color;
+		highlight = colorClasses[highlight];
+		textRender.fillStyle = highlight;
 		textRender.fillRect(fontX, fontY, cellW, cellH);
 		hasDrawn = true;
 	}
 
-	var color = colors ? colors[y * tileC + x] : 0;
 	// initialize link color to default text color in case there's no link to color
 	var linkColor = styles.text;
 	if(textColorOverride) {
-		if(writability == 0 && textColorOverride & 4) linkColor = styles.public_text;
-		if(writability == 1 && textColorOverride & 2) linkColor = styles.member_text;
-		if(writability == 2 && textColorOverride & 1) linkColor = styles.owner_text;
+		if(protectionValue == 0 && textColorOverride & 4) linkColor = styles.public_text;
+		if(protectionValue == 1 && textColorOverride & 2) linkColor = styles.member_text;
+		if(protectionValue == 2 && textColorOverride & 1) linkColor = styles.owner_text;
 	}
 
 	var isLink = false;
 
 	// check if this char is a link
-	if(linksRendered && props[y] && props[y][x]) {
-		var link = props[y][x].link;
-		if(link) {
-			isLink = true;
-			if(link.type == "url") {
-				linkColor = defaultURLLinkColor;
-			} else if(link.type == "coord") {
-				linkColor = defaultCoordLinkColor;
-			}
+	if(linksRendered && linkType) {
+		isLink = true;
+		if(linkType == "url") {
+			linkColor = defaultURLLinkColor;
+		} else if(linkType == "coord") {
+			linkColor = defaultCoordLinkColor;
 		}
 	}
 
@@ -784,8 +765,8 @@ function renderChar(textRender, x, y, clampW, clampH, str, tile, writability, pr
 		}
 	}
 
-	if(((specialClientHookMap >> 0) & 1) && !charOverflowMode) {
-		var status = dispatchCharClientHook(cCode, textRender, str, x, y, clampW, clampH);
+	if(((specialClientHookMap >> 0) & 1) && !isOverflow) {
+		var status = dispatchCharClientHook(cCode, textRender, tileX, tileY, charX, charY, cellW, cellH);
 		if(status) {
 			return true;
 		}
@@ -813,8 +794,8 @@ function renderChar(textRender, x, y, clampW, clampH, str, tile, writability, pr
 	isSpecial = isSpecial || (cCode >= 0x2500 && cCode <= 0x257F);
 
 	if(ansiBlockFill && isValidSpecialSymbol(cCode) && !(isHalfShard && !isBold)) {
-		if(!charOverflowMode) {
-			drawBlockChar(cCode, textRender, x, y, clampW, clampH);
+		if(!isOverflow) {
+			drawBlockChar(cCode, textRender, fontX, fontY, cellW, cellH);
 			hasDrawn = true;
 		}
 	} else { // character rendering
@@ -1040,9 +1021,11 @@ function clearTile(tileX, tileY) {
 function renderContent(textRenderCtx, tileX, tileY, clampW, clampH, offsetX, offsetY, bounds, charOverflowMode) {
 	var str = tileY + "," + tileX;
 	var tile = Tile.get(tileX, tileY);
-	if(!tile) return;
-	var props = tile.properties.cell_props || {};
+	if(!tile) return false;
+	var cellProps = tile.properties.cell_props;
 	var writability = tile.writability;
+	var tileContent = tile.content;
+	var tileColors = tile.properties.color;
 	var x1 = 0;
 	var y1 = 0;
 	var x2 = tileC - 1;
@@ -1054,15 +1037,43 @@ function renderContent(textRenderCtx, tileX, tileY, clampW, clampH, offsetX, off
 		y2 = bounds[3];
 	}
 	var hasDrawn = false;
+	var tileBgCells = coloredChars[str];
 	for(var y = y1; y <= y2; y++) {
+		var tileRowBgCells = null;
+		var tileRowProps = null;
+		if(tileBgCells) tileRowBgCells = tileBgCells[y];
+		if(cellProps) tileRowProps = cellProps[y];
 		for(var x = x1; x <= x2; x++) {
+			var tileColBgCell = null;
+			var tileColProps = null;
+			if(tileRowBgCells) tileColBgCell = tileRowBgCells[x];
+			if(tileRowProps) tileColProps = tileRowProps[x];
+			var cellLinkType = null;
+			if(tileColProps && tileColProps.link) {
+				cellLinkType = tileColProps.link.type;
+			}
 			var protValue = writability;
 			if(tile.properties.char) {
 				protValue = tile.properties.char[y * tileC + x];
 			}
 			if(protValue == null) protValue = tile.properties.writability;
 			if(protValue == null) protValue = state.worldModel.writability;
-			var dChar = renderChar(textRenderCtx, x, y, clampW, clampH, str, tile, protValue, props, offsetX, offsetY, charOverflowMode);
+			var char = tileContent[y * tileC + x];
+			var color = tileColors ? tileColors[y * tileC + x] : 0;
+
+			var tmpCellW = clampW / tileC;
+			var tmpCellH = clampH / tileR;
+			var sx = Math.floor(x * tmpCellW);
+			var sy = Math.floor(y * tmpCellH);
+			var ex = Math.floor((x + 1) * tmpCellW);
+			var ey = Math.floor((y + 1) * tmpCellH);
+			tmpCellW = ex - sx;
+			tmpCellH = ey - sy;
+
+			var offX = sx + offsetX;
+			var offY = sy + offsetY;
+
+			var dChar = renderChar(textRenderCtx, offX, offY, char, color, tmpCellW, tmpCellH, protValue, cellLinkType, tileColBgCell, x, y, tileX, tileY, charOverflowMode);
 			if(dChar) {
 				hasDrawn = true;
 			}
