@@ -1,5 +1,5 @@
 entrypoint = "main.js"
-run = "echo no"
+run = "node main.js"
 
 [nix]
 channel = "stable-22_11"
