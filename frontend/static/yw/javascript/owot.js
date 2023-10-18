@@ -162,6 +162,9 @@ var cursorOutlineEnabled   = false;
 var showCursorCoordinates  = false; // show cursor coords in coordinate bar
 var textDecorationsEnabled = true; // bold, italic, underline, and strikethrough
 
+// preemptively avoid proxies - a proxy attack has not happened yet but could at some point
+const Proxy = null;
+
 var keyConfig = {
 	reset: "ESC",
 	copyColor: "ALT+C",
