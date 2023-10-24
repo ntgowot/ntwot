@@ -8,6 +8,8 @@ var initChatOpen         = false;
 var chatWriteHistory     = []; // history of user's chats
 var chatRecordsPage      = [];
 var chatRecordsGlobal    = [];
+var chatAdditionsPage    = [];
+var chatAdditionsGlobal  = [];
 var chatWriteHistoryMax  = 100; // maximum size of chat write history length
 var chatHistoryLimit     = 3500;
 var chatWriteHistoryIdx  = -1; // location in chat write history
@@ -347,12 +349,14 @@ elm.chat_open.addEventListener("click", function() {
 	elm.chat_open.style.display = "none";
 	chatOpen = true;
 	if(selectedChatTab == 0) {
+		insertNewChatElements();
 		chatPageUnread = 0;
 		if(!initPageTabOpen) {
 			initPageTabOpen = true;
 			elm.page_chatfield.scrollTop = elm.page_chatfield.scrollHeight;
 		}
 	} else {
+		insertNewChatElements();
 		chatGlobalUnread = 0;
 		if(!initGlobalTabOpen) {
 			initGlobalTabOpen = true;
@@ -383,6 +387,8 @@ elm.chat_page_tab.addEventListener("click", function() {
 	elm.page_chatfield.style.display = "";
 	selectedChatTab = 0;
 	chatPageUnread = 0;
+
+	insertNewChatElements();
 	updateUnread();
 	if(!initPageTabOpen) {
 		initPageTabOpen = true;
@@ -398,6 +404,8 @@ elm.chat_global_tab.addEventListener("click", function() {
 	elm.page_chatfield.style.display = "none";
 	selectedChatTab = 1;
 	chatGlobalUnread = 0;
+
+	insertNewChatElements();
 	updateUnread();
 	if(!initGlobalTabOpen) {
 		initGlobalTabOpen = true;
@@ -570,9 +578,27 @@ function addChat(chatfield, id, type, nickname, message, realUsername, op, admin
 	if(!realUsername) realUsername = "";
 	if(!nickname) nickname = realUsername;
 	if(!color) color = assignColor(nickname);
+	var field = evaluateChatfield(chatfield);
+	var msgData = {
+		id, type, nickname, message, realUsername, op, admin, staff, color, date, dataObj
+	};
+	if(field == elm.page_chatfield) {
+		chatAdditionsPage.push(msgData);
+		if(chatAdditionsPage.length > chatHistoryLimit) {
+			chatAdditionsPage.shift();
+		}
+	} else if(field == elm.global_chatfield) {
+		chatAdditionsGlobal.push(msgData);
+		if(chatAdditionsGlobal.length > chatHistoryLimit) {
+			chatAdditionsGlobal.shift();
+		}
+	}
+	insertNewChatElements();
+}
+
+function buildChatElement(field, id, type, nickname, message, realUsername, op, admin, staff, color, date, dataObj) {
 	var dateStr = "";
 	if(date) dateStr = convertToDate(date);
-	var field = evaluateChatfield(chatfield);
 	var pm = dataObj.privateMessage;
 	var isGreen = false;
 
@@ -799,6 +825,26 @@ function addChat(chatfield, id, type, nickname, message, realUsername, op, admin
 	}
 }
 
+function insertNewChatElementsIntoChatfield(chatfield, messageQueue) {
+	for(var i = 0; i < messageQueue.length; i++) {
+		var message = messageQueue[i];
+		buildChatElement(chatfield,
+				message.id, message.type, message.nickname, message.message,
+				message.realUsername, message.op, message.admin, message.staff,
+				message.color, message.date, message.dataObj);
+	}
+	messageQueue.splice(0);
+}
+
+function insertNewChatElements() {
+	if(!chatOpen) return;
+	if(selectedChatTab == 0) {
+		insertNewChatElementsIntoChatfield(elm.page_chatfield, chatAdditionsPage);
+	} else if(selectedChatTab == 1) {
+		insertNewChatElementsIntoChatfield(elm.global_chatfield, chatAdditionsGlobal);
+	}
+}
+
 function removeChatByIdAndDate(id, date) {
 	if(!acceptChatDeletions) return;
 	var records = [chatRecordsPage, chatRecordsGlobal];
@@ -840,15 +886,12 @@ function addUnreadChatBar(chatfield, message, checkSituation) {
 }
 
 function isLongWidthChar(x) {
-	switch(x) {
-		case 0x0BF5: return true;
-		case 0x2E3B: return true;
-		case 0xA9C5: return true;
-		case 0xFDFD: return true;
-		case 0x12219: return true;
-		case 0x1242B: return true;
-	}
-	return false;
+	return [
+		3061, 11835, 65021, 73776, 73795, 73807, 74017, 
+		74022, 74059, 74060, 74065, 74265, 74382, 74588, 
+		74611, 74788, 74791, 74792, 74793, 74794, 74795, 
+		74798, 74801
+	].includes(x);
 }
 
 function filterChatMessage(str) {

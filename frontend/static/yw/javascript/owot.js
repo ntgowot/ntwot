@@ -2860,10 +2860,7 @@ elm.textInput.addEventListener("input", event_input);
 
 elm.textInput.addEventListener("paste", function(e) {
 	// reset all the gunk added by the browser.
-	// failsafe: don't reset if more than 5 chars just in case this clears pasted data
-	if(elm.textInput.value.length < 5) {
-		elm.textInput.value = "";
-	}
+	elm.textInput.value = "";
 });
 
 elm.textInput.addEventListener("compositionstart", function(e) {
@@ -2892,12 +2889,6 @@ elm.textInput.addEventListener("compositionend", function(e) {
 	elm.textInput.value = "";
 });
 
-document.body.addEventListener("paste", function() {
-	// this fires before any content gets added from the paste.
-	// we must first clear out all the mess added to the input by the browser.
-	elm.textInput.value = "";
-});
-
 function cyclePaste(parser, yieldItem) {
 	var item = parser ? parser.nextItem() : yieldItem;
 	if(item == -1)  {
@@ -2914,7 +2905,7 @@ function cyclePaste(parser, yieldItem) {
 				return item;
 			}
 		} else {
-			moveCursor("right");
+			moveCursor("right", true);
 		}
 	} else if(item.type == "link") {
 		var undoTop = undoBuffer.top();
