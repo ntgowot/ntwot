@@ -3196,6 +3196,87 @@ function executeJS(code) {
 	return jsCode();
 }
 
+var modules = {};
+var isModule = false;
+var currentModule = null;
+var modPrefixes = [[]];
+
+function runModule(identifier, code, prefix) {
+	if (typeof code !== "function")
+		code = new Function("isModule", "currentModule", code);
+
+	modPrefixes.push(prefix || []);
+	modules[identifier] = code(true, identifier);
+	modPrefixes.pop();
+}
+
+function normalizeModIdentifier(identifier) {
+	identifier = identifier.toLowerCase();
+	var parts = identifier.split('/');
+	parts = parts.filter(part => part !== '.' && part !== '');
+
+	var result = [...modPrefixes[modPrefixes.length - 1]];
+	for (var i = 0; i < parts.length; ++i) {
+		if (parts[i] === "..") {
+			if (result.length > 0)
+				result.pop();
+		} else {
+			if  (i < 2 && parts[i].startsWith(".") || parts[i].includes(".."))
+				return null;
+			result.push(parts[i]);
+		}
+	}
+
+	identifier = result.join('/');
+	if (/^[\w.-]+\/[\w.-]+(?:@[\w.-]+)?\/(.+\.js)$/.test(identifier))
+		return identifier;
+
+	return null;
+}
+
+function isModuleLoaded(identifier, normalize) {
+	if (typeof normalize === "undefined")
+		normalize = true;
+
+	if (normalize) {
+		identifier = normalizeModIdentifier(identifier);
+		if (identifier === null) {
+			console.warn("Invalid module name provided.");
+			return null;
+		}
+	}
+
+	return modules.hasOwnProperty(identifier);
+}
+
+function useLocal(code, identifier) {
+	if (isModuleLoaded(identifier, false)) {
+		return modules[identifier];
+	}
+
+	var prefix = identifier.split("/").slice(0, -1);
+	runModule(identifier, code, prefix);
+	return modules[identifier];
+}
+
+function use(identifier) {
+	identifier = normalizeModIdentifier(identifier);
+	if (identifier === null) {
+		console.warn("Invalid module name provided.");
+		return null;
+	}
+
+	var req = new XMLHttpRequest();
+	req.open("GET", "https://cdn.jsdelivr.net/gh/" + identifier, false);
+	req.send(null);
+
+	if (req.status == 200)
+		return useLocal(req.responseText, identifier);
+
+	console.warn("Request to load module " + identifier + "failed.");
+	return null;
+}
+
 function confirmRunJSLink(data) {
 	var preview = data;
 	if(preview.length > 256) {
